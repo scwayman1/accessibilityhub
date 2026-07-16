@@ -115,7 +115,7 @@ def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
     mounted_name = pdf.name
     result = run(
         [
-            "docker", "run", "--rm", "--network", "none", "--platform", "linux/amd64",
+            "docker", "run", "--rm", "--pull=never", "--network", "none", "--platform", "linux/amd64",
             "-v", f"{mounted_dir}:/input:ro",
             VERAPDF_IMAGE,
             "--format", "json", "--flavour", VERAPDF_PROFILE, f"/input/{mounted_name}",
