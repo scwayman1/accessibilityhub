@@ -18,5 +18,5 @@ jobs:
           python-version: "3.11"
       - name: Compile Python modules
         run: python -m py_compile check_pdf.py local_reviewer.py
-      - name: Run local reviewer unit tests
-        run: python -m unittest tests/test_local_reviewer.py -v
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v

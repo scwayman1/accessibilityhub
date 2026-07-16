@@ -79,6 +79,24 @@ delight_content.json
 
 It cycles encouraging accessibility tips and gentle humor during a real local scan. Categories are individually enabled/disabled in the JSON file. It does not use AI, retrieve external content, play audio, or claim that a stage has passed before the actual checker returns.
 
+## Tina Phase 1 — deterministic evidence kernel
+
+The repository also contains the first Tina architecture tracer bullet in `tina/kernel.py`.
+It is deliberately small, local, and non-agentic:
+
+```text
+registered typed tool → permission check → versioned DAR v0 document record
+→ versioned rule → evidence-backed finding → explicit claim boundary
+```
+
+`ToolGateway` accepts only registered tool adapters with declared version, purpose,
+determinism, mutation status, timeout, and permissions. It is not a shell-command
+runner. The initial `inspect_file_signature` tool creates reproducible intake evidence
+and never makes a conformance determination.
+
+Future models and remediation tools must remain outside this read-only kernel and use
+workflow-issued permissions plus evidence references.
+
 ## Execution evidence
 
 Executed locally on 2026-07-15 using the public Coastline sponsorship packet already present in the repository.
