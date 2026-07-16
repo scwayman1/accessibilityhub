@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "session_no_repeat": true,
+  "categories": {
+    "accessibility_tips": {"enabled": true, "items": [
+      "Clear headings help readers move through a document without getting lost.",
+      "A short, useful image description can make the point of a visual available to everyone.",
+      "Good document structure usually makes material easier to skim for every student.",
+      "A meaningful title gives a document context before anyone starts reading.",
+      "Fixing a source document is usually easier than repairing an exported PDF."
+    ]},
+    "gentle_humor": {"enabled": true, "items": [
+      "I take heading levels very seriously. Possibly too seriously.",
+      "This PDF and I are getting to know each other.",
+      "No lectures. Just a few helpful clues.",
+      "I brought a flashlight for the document structure.",
+      "Looking for details that make a real difference."
+    ]},
+    "encouragement": {"enabled": true, "items": [
+      "Every small improvement can make course material easier to use.",
+      "You are making the next student experience a little smoother.",
+      "A clear next step beats a long list of jargon.",
+      "Accessibility work is learner-centered design in practice.",
+      "Progress counts, even when it is one document at a time."
+    ]}
+  }
+}
