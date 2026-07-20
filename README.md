@@ -1,3 +1,22 @@
+# Coastline Accessibility Studio
+
+**Review → Understand → Fix → Verify.** A local-first document remediation
+and learning workbench: it finds accessibility barriers, teaches why they
+matter, fixes what a machine can safely fix, proves the result with evidence
+receipts, and tracks evidence-based skill mastery so the same defect stops
+appearing. Runs locally, deterministic, works without AI.
+
+Canonical product documents:
+
+- [Product requirements — the accessibility learning journey](docs/prd-accessibility-learning-journey.md)
+- [AI tool chain, model router, BYOK and evaluation architecture](docs/ai-architecture-byok.md)
+- [Progress ledger — PRD phases vs shipped evidence](docs/progress-ledger.md)
+- [Product assessment (July 2026)](docs/product-assessment-2026-07.md)
+- [Document editor vision](docs/document-editor-vision.md)
+- [Private beta intake gates](docs/tina-private-beta-intake.md)
+
+---
+
 # Spike 001 — PDF-only deterministic accessibility evidence checker
 
 ## Purpose
@@ -86,6 +105,28 @@ The workbench closes the loop on the findings it can deterministically resolve:
 - Structural findings (tags, reading order, image alternatives, OCR) remain
   routed to human review; the fix banner states explicitly that resolving
   technical findings is not a conformance result.
+
+### Prove and improve — receipts, judgments, and the learning journey
+
+- Every review can export an **evidence receipt** (`POST /api/receipt`,
+  `tina/evidence.py`): fingerprints in and out, tool and ruleset versions,
+  checks performed and not performed, findings before/after, mutation
+  provenance, human decisions, unresolved items, and a verifiable integrity
+  hash. The receipt states explicitly that it is not a certification.
+- `review_required` findings carry a **judgment attestation** flow
+  (`POST /api/attest`): the human records the decision; the receipt marks it
+  `user_attested`.
+- A deterministic **learning journey** (`tina/learning.py`,
+  `GET /api/journey`) tracks evidence-based mastery per skill —
+  introduced → applied → verified → **sustained** (the defect has not
+  recurred across subsequent documents; regression demotes it) — and flags
+  repeat defects with deterministic recommendations. The local store keeps
+  only hash prefixes, rule IDs, and attested decisions; never filenames or
+  content.
+- Reviews also report **verified strengths**: individual pieces of machine
+  evidence (title present, language declared, structure tree exists), never
+  combined into an overall pass. A CI governance test bans prohibited
+  outcome language across all product surfaces.
 
 ### HTML working copy — convert the asset and make the improvements
 

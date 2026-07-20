@@ -14,9 +14,12 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from tina.derive import DerivationError, HtmlDraftConverter
+from tina.evidence import build_receipt
+from tina.learning import LearningJourney
 from tina.remedy import MetadataRemediation, RemediationError
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_JSON_BYTES = 10 * 1024 * 1024
 
 
 class UploadValidationError(ValueError):
@@ -112,8 +115,37 @@ def run_spike_checker(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
 def create_server(
     port: int,
     checker: Callable[[Path, Path], dict[str, Any]],
+    journey: LearningJourney | None = None,
 ) -> ThreadingHTTPServer:
     """Create a localhost-only HTTP server for the browser workbench."""
+    if journey is None:
+        journey = LearningJourney()  # in-memory unless a persistent journey is supplied
+
+    def record_review_event(report: dict[str, Any]) -> None:
+        try:
+            journey.record_review(
+                (report.get("input") or {}).get("sha256"),
+                [item.get("rule_id") for item in report.get("findings", [])],
+            )
+        except Exception:  # Learning must never break a review.
+            pass
+
+    def record_fix_event(result: dict[str, Any]) -> None:
+        try:
+            before = result["before"]
+            after_ids = {item.get("rule_id") for item in result["after"].get("findings", [])}
+            resolved = [
+                item.get("rule_id")
+                for item in before.get("findings", [])
+                if item.get("rule_id") not in after_ids
+            ]
+            journey.record_review(
+                (before.get("input") or {}).get("sha256"),
+                [item.get("rule_id") for item in before.get("findings", [])],
+            )
+            journey.record_fix((before.get("input") or {}).get("sha256"), resolved)
+        except Exception:
+            pass
 
     class LocalReviewerHandler(BaseHTTPRequestHandler):
         def send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -129,6 +161,9 @@ def create_server(
             request_url = urlparse(self.path)
             if request_url.path == "/api/health":
                 self.send_json(HTTPStatus.OK, {"ok": True, "scope": "loopback-only", "ai": False})
+                return
+            if request_url.path == "/api/journey":
+                self.send_json(HTTPStatus.OK, journey.journey())
                 return
             static_files = {
                 "/": ("local_reviewer.html", "text/html; charset=utf-8"),
@@ -149,15 +184,53 @@ def create_server(
             self.end_headers()
             self.wfile.write(encoded)
 
+        def read_json_body(self, length: int) -> dict[str, Any] | None:
+            if length <= 0 or length > MAX_JSON_BYTES:
+                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body must be JSON under 10 MB."})
+                return None
+            try:
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise ValueError
+                return body
+            except (json.JSONDecodeError, ValueError):
+                self.send_json(HTTPStatus.BAD_REQUEST, {"error": "Request body must be a JSON object."})
+                return None
+
         def do_POST(self) -> None:  # noqa: N802
             request_url = urlparse(self.path)
-            if request_url.path not in {"/api/review", "/api/fix", "/api/convert"}:
-                self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-                return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = 0
+
+            if request_url.path == "/api/attest":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                journey.record_attestation(str(body.get("rule_id", "")), str(body.get("decision", "")))
+                self.send_json(HTTPStatus.OK, journey.journey())
+                return
+            if request_url.path == "/api/receipt":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    receipt = build_receipt(
+                        review=body.get("review") or {},
+                        after=body.get("after"),
+                        remediation=body.get("remediation"),
+                        attestations=body.get("attestations"),
+                    )
+                except ValueError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                self.send_json(HTTPStatus.OK, receipt)
+                return
+
+            if request_url.path not in {"/api/review", "/api/fix", "/api/convert"}:
+                self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                return
             if length <= 0 or length > MAX_PDF_BYTES:
                 self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "PDF must be between 1 byte and 50 MB."})
                 return
@@ -166,6 +239,7 @@ def create_server(
             try:
                 if request_url.path == "/api/review":
                     payload = normalize_report_for_browser(run_local_review(filename, self.rfile.read(length), checker))
+                    record_review_event(payload)
                 elif request_url.path == "/api/convert":
                     payload = run_local_convert(filename, self.rfile.read(length))
                 else:
@@ -176,6 +250,7 @@ def create_server(
                         title=query.get("title", [None])[0],
                         language=query.get("language", [None])[0],
                     )
+                    record_fix_event(payload)
             except (UploadValidationError, RemediationError, DerivationError) as error:
                 self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
                 return
@@ -191,9 +266,10 @@ def create_server(
 
 
 def main() -> int:
-    server = create_server(8765, run_spike_checker)
+    journey = LearningJourney(Path.home() / ".coastline-studio" / "journey.json")
+    server = create_server(8765, run_spike_checker, journey=journey)
     print("Coastline Accessibility Studio local reviewer: http://127.0.0.1:8765")
-    print("Loopback only · PDF-only · deterministic checks and fixes · no AI")
+    print("Loopback only · PDF-only · deterministic · works without AI")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

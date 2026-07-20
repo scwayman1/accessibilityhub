@@ -168,6 +168,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     findings: list[dict[str, str]] = []
+    strengths: list[dict[str, str]] = []
     qpdf = run(["qpdf", "--check", str(pdf)], timeout=60)
     if tool_missing(qpdf):
         findings.append(finding(
@@ -181,6 +182,12 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             (qpdf["stderr"] or qpdf["stdout"] or "qpdf could not validate the PDF structure").strip()[:1000],
             "Quarantine the file and request a new source artifact before further processing.",
         ))
+    else:
+        strengths.append({
+            "rule_id": "PDF.INTAKE.QPDF_CHECK",
+            "status": "machine_verified",
+            "evidence": "qpdf validated the file's structural integrity.",
+        })
 
     encryption_probe = run(["qpdf", "--show-encryption", str(pdf)], timeout=30)
     encryption_text = (encryption_probe["stdout"] or "") + "\n" + (encryption_probe["stderr"] or "")
@@ -228,18 +235,36 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "No document title metadata was found.",
                 "Set a meaningful title in the source application and regenerate the PDF.",
             ))
+        else:
+            strengths.append({
+                "rule_id": "PDF.METADATA.TITLE",
+                "status": "machine_verified",
+                "evidence": "A document title is present in the information dictionary.",
+            })
         if not metadata["language"]:
             findings.append(finding(
                 "deterministic_defect", "PDF.METADATA.LANGUAGE", "medium", "document catalog /Lang",
                 "No primary document language metadata was found.",
                 "Set the primary language in the source application and regenerate the PDF.",
             ))
+        else:
+            strengths.append({
+                "rule_id": "PDF.METADATA.LANGUAGE",
+                "status": "machine_verified",
+                "evidence": f"A primary language ({metadata['language']}) is declared in the document catalog.",
+            })
         if not metadata["marked"] or not metadata["has_structure_tree"]:
             findings.append(finding(
                 "review_required", "PDF.STRUCTURE.SEMANTICS", "high", "document catalog",
                 f"Marked={metadata['marked']}; structure_tree={metadata['has_structure_tree']}.",
                 "Review the original source and PDF tag/reading-order behavior with an accessibility specialist.",
             ))
+        else:
+            strengths.append({
+                "rule_id": "PDF.STRUCTURE.SEMANTICS",
+                "status": "machine_verified",
+                "evidence": "A tagged structure tree exists. Whether the tags convey correct meaning still requires human review.",
+            })
 
         images = links = pages_without_text = 0
         for index, page in enumerate(reader.pages, start=1):
@@ -305,6 +330,8 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
         "metadata": metadata,
         "verapdf": verapdf,
         "findings": findings,
+        "strengths": strengths,
+        "strengths_note": "Verified strengths are individual pieces of machine evidence. They are never combined into an overall accessibility pass.",
         "claim_boundary": "Technical evidence and review routing only. No conformance, legal, publish-readiness, or end-user usability determination is produced.",
     }
     return report
