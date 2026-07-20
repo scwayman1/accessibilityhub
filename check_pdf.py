@@ -47,6 +47,18 @@ def run(command: list[str], timeout: int = 60) -> dict[str, Any]:
             "stdout": error.stdout or "",
             "stderr": f"timeout after {timeout}s",
         }
+    except FileNotFoundError:
+        return {
+            "command": command,
+            "returncode": None,
+            "stdout": "",
+            "stderr": f"{command[0]} is not installed",
+            "tool_missing": True,
+        }
+
+
+def tool_missing(result: dict[str, Any]) -> bool:
+    return bool(result.get("tool_missing"))
 
 
 def command_version(command: list[str]) -> str | None:
@@ -102,13 +114,18 @@ def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
     report = output_dir / "verapdf-ua1.json"
     image_check = run(["docker", "image", "inspect", VERAPDF_IMAGE], timeout=10)
     if image_check["returncode"] != 0:
+        reason = (
+            "Docker is not installed, so the containerized veraPDF validator did not run."
+            if tool_missing(image_check)
+            else "Pinned veraPDF image is unavailable locally; the reviewer will not pull images during a check."
+        )
         return {
             "image": VERAPDF_IMAGE,
             "profile": VERAPDF_PROFILE,
             "classification": "experimental_technical_findings_only",
             "returncode": None,
             "tool_available": False,
-            "stderr": "Pinned veraPDF image is unavailable locally; the reviewer will not pull images during a check.",
+            "stderr": reason,
             "report_path": None,
         }
     mounted_dir = str(pdf.parent.resolve())
@@ -152,7 +169,13 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     findings: list[dict[str, str]] = []
     qpdf = run(["qpdf", "--check", str(pdf)], timeout=60)
-    if qpdf["returncode"] != 0:
+    if tool_missing(qpdf):
+        findings.append(finding(
+            "tool_failure_or_unsupported", "PDF.INTAKE.QPDF_UNAVAILABLE", "medium", "reviewer toolchain",
+            "qpdf is not installed on this computer, so the structural integrity check did not run.",
+            "Install qpdf to include structural integrity evidence in future reviews.",
+        ))
+    elif qpdf["returncode"] != 0:
         findings.append(finding(
             "blocking_technical_failure", "PDF.INTAKE.QPDF_CHECK", "high", "document",
             (qpdf["stderr"] or qpdf["stdout"] or "qpdf could not validate the PDF structure").strip()[:1000],
@@ -246,7 +269,8 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "Review link text and destination purpose in context.",
             ))
 
-    if qpdf["returncode"] == 0 and not encrypted and reader is not None:
+    qpdf_blocking = not tool_missing(qpdf) and qpdf["returncode"] != 0
+    if not qpdf_blocking and not encrypted and reader is not None:
         verapdf = run_verapdf(pdf, output_dir)
         findings.append(finding(
             "advisory", "PDF.VERAPDF.UA1", "info", "veraPDF report",

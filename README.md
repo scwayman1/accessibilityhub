@@ -8,7 +8,7 @@ Validate whether Coastline Accessibility Studio can produce a useful, source-loc
 
 - Local files only. The browser sends the selected PDF only to the loopback reviewer on this computer; there is no remote or public upload endpoint.
 - No external AI or model calls.
-- No document remediation or rewrite.
+- Remediation is limited to deterministic, permission-gated metadata fixes applied to an in-memory copy; the original file is never rewritten or persisted.
 - Output is a technical findings report, **not** a PDF/UA, WCAG, Section 508, or legal compliance certification.
 - Use the public Coastline sponsorship packet already in `client/public/` as the initial fixture; do not use student, faculty, or protected records.
 
@@ -71,6 +71,26 @@ The reviewer binds only to `127.0.0.1`. Choosing a PDF sends it only to that loc
 
 Stop the local reviewer with `Ctrl-C`. Stop the container VM when finished with `colima stop`.
 
+### Fix loop — review, learn, fix a copy, re-check
+
+The workbench closes the loop on the findings it can deterministically resolve:
+
+- `GET /api/knowledge` serves `rule_knowledge.json`, a teaching card for every
+  checker rule: why it matters, who it affects, how to fix it at the source,
+  and whether the tool can fix it. A CI test fails if a rule ships without one.
+- `POST /api/fix` runs the review, applies requested metadata fixes (document
+  title with `/DisplayDocTitle`, primary language `/Lang`) to an in-memory copy
+  via the permission-gated `tina/remedy.py` tool, re-runs the review on the
+  copy, and returns before/after reports plus the updated PDF for download.
+  Fixes stack because the workbench keeps working from the updated copy.
+- Structural findings (tags, reading order, image alternatives, OCR) remain
+  routed to human review; the fix banner states explicitly that resolving
+  technical findings is not a conformance result.
+
+If qpdf or Docker is not installed, the review no longer fails: the missing
+tool is reported as an explicit `tool_failure_or_unsupported` finding and the
+review completes with the evidence it can gather.
+
 The workbench now includes an optional, pluggable local **Delight Engine** configured in:
 
 ```text
@@ -96,6 +116,18 @@ and never makes a conformance determination.
 
 Future models and remediation tools must remain outside this read-only kernel and use
 workflow-issued permissions plus evidence references.
+
+## Tina Phase 2 — permission-gated metadata remediation
+
+`tina/remedy.py` is the first mutating tool, registered through the same
+`ToolGateway` with `mutates_document=True` and a dedicated
+`document.remediate.metadata` permission, outside the read-only kernel. It
+fixes only what is deterministic (title, language, title display preference),
+records before/after hashes for every mutation, and its report carries the
+claim boundary that resolving findings does not make a document conformant.
+
+Product direction lives in `docs/product-assessment-2026-07.md` and
+`docs/document-editor-vision.md`.
 
 ## Execution evidence
 

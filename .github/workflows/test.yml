@@ -16,7 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
       - name: Compile Python modules
-        run: python -m py_compile check_pdf.py local_reviewer.py
+        run: python -m py_compile check_pdf.py local_reviewer.py tina/kernel.py tina/remedy.py
       - name: Run unit tests
         run: python -m unittest discover -s tests -v

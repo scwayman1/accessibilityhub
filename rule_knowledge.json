@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "claim_boundary": "These explanations teach why each finding matters. Resolving a finding removes that technical barrier; it does not certify the document.",
+  "rules": {
+    "PDF.METADATA.TITLE": {
+      "title": "Document title",
+      "why_it_matters": "Screen readers announce the document title before anything else. Without one, students hear a filename like 'final_v3 (2).pdf' and have to guess what they opened.",
+      "who_it_affects": "Screen reader users, people managing many open tabs, and anyone finding the file again later.",
+      "fix_at_source": "In Word or Google Docs, set the title under File properties before exporting. In this workbench, you can also apply the title directly to a copy of this PDF.",
+      "auto_fixable": true,
+      "fix_field": "title",
+      "fix_label": "Document title"
+    },
+    "PDF.METADATA.LANGUAGE": {
+      "why_it_matters": "Assistive technology uses the document language to pick the right voice and pronunciation. A missing language can make an English document read with the wrong accent, or Spanish content sound like gibberish.",
+      "title": "Primary language",
+      "who_it_affects": "Screen reader and text-to-speech users, and translation tools.",
+      "fix_at_source": "Set the authoring language in the source application before exporting. In this workbench, you can also apply a language tag like en-US directly to a copy of this PDF.",
+      "auto_fixable": true,
+      "fix_field": "language",
+      "fix_label": "Primary language (for example en-US)"
+    },
+    "PDF.STRUCTURE.SEMANTICS": {
+      "title": "Tags and reading order",
+      "why_it_matters": "Tags tell assistive technology what each part of the page is — heading, list, table, paragraph — and what order to read it in. Without them, a screen reader gets a flat stream of text with no landmarks.",
+      "who_it_affects": "Screen reader users most of all; also anyone using reflow on a phone or reading tools that rely on structure.",
+      "fix_at_source": "Use real heading styles, lists, and table tools in the source document, then export with 'tagged PDF' or 'document structure' enabled. Repairing tags after export is much harder than exporting them correctly.",
+      "auto_fixable": false
+    },
+    "PDF.TEXT_LAYER": {
+      "title": "Extractable text",
+      "why_it_matters": "Pages without a text layer are usually scans — pictures of words. Screen readers cannot read pictures, and students cannot search, copy, or highlight them.",
+      "who_it_affects": "Screen reader users completely; every student who searches, copies quotes, or uses read-aloud tools.",
+      "fix_at_source": "Find the original digital document if it exists. If only a scan exists, run recognized OCR and then review the result — OCR output still needs a human check.",
+      "auto_fixable": false
+    },
+    "PDF.IMAGES.ALTERNATIVES": {
+      "title": "Image descriptions",
+      "why_it_matters": "An image with no text alternative is silent for a screen reader user. A short description of why the image is there — not what every pixel shows — carries its meaning to everyone.",
+      "who_it_affects": "Blind and low-vision students, and anyone on a slow connection where images fail to load.",
+      "fix_at_source": "Add alt text to each meaningful image in the source document, and mark purely decorative images as decorative, then re-export.",
+      "auto_fixable": false
+    },
+    "PDF.LINKS.PURPOSE": {
+      "title": "Link purpose",
+      "why_it_matters": "Screen reader users often pull up a list of just the links on a page. Links that read 'click here' or a raw URL give that list no meaning.",
+      "who_it_affects": "Screen reader users navigating by link list, and anyone skimming for the right destination.",
+      "fix_at_source": "Rewrite link text in the source so each link describes its destination, like 'Week 3 reading: chapter 4'.",
+      "auto_fixable": false
+    },
+    "PDF.INTAKE.ENCRYPTED": {
+      "title": "Encrypted document",
+      "why_it_matters": "Password protection and permission restrictions can block assistive technology from reading the document at all — and they block this reviewer too.",
+      "who_it_affects": "Assistive technology users first, and eventually everyone when the password is lost.",
+      "fix_at_source": "Get an unencrypted copy from the document owner. If restrictions are required, verify that accessibility permissions remain enabled.",
+      "auto_fixable": false
+    },
+    "PDF.INTAKE.QPDF_CHECK": {
+      "title": "Damaged PDF structure",
+      "why_it_matters": "A structurally damaged PDF may open in one viewer and fail in another. Assistive technology is usually the first thing to break on a damaged file.",
+      "who_it_affects": "Everyone, unpredictably — different tools fail in different ways.",
+      "fix_at_source": "Go back to the source document and export a fresh PDF rather than repairing the damaged copy.",
+      "auto_fixable": false
+    },
+    "PDF.INTAKE.QPDF_UNAVAILABLE": {
+      "title": "Structure checker not installed",
+      "why_it_matters": "This review ran without qpdf, so structural integrity evidence is missing from the report. The findings you see are still valid; the report is just less complete.",
+      "who_it_affects": "The completeness of this review only — not the document itself.",
+      "fix_at_source": "Install qpdf on this computer to include structural checks in future reviews.",
+      "auto_fixable": false
+    },
+    "PDF.PARSE.PYPDF": {
+      "title": "Unreadable by the parser",
+      "why_it_matters": "If a well-behaved parser cannot open the file, assistive technology may not be able to either.",
+      "who_it_affects": "Potentially every reader; certainly this review, which could not inspect the document contents.",
+      "fix_at_source": "Export a fresh PDF from the original source document, then review again.",
+      "auto_fixable": false
+    },
+    "PDF.VERAPDF.UA1": {
+      "title": "Validator evidence",
+      "why_it_matters": "veraPDF checks the document against the machine-checkable parts of the PDF/UA accessibility standard. Its raw report is technical evidence for a specialist, not a verdict.",
+      "who_it_affects": "Reviewers and specialists deciding what to fix next.",
+      "fix_at_source": "Use the raw report alongside these findings; do not treat a clean validator run as proof the document works for real readers.",
+      "auto_fixable": false
+    }
+  }
+}

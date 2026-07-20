@@ -2,6 +2,7 @@
 """Loopback-only local PDF reviewer for Coastline Accessibility Studio."""
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
@@ -11,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+
+from tina.remedy import MetadataRemediation, RemediationError
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
 
@@ -50,6 +53,32 @@ def normalize_report_for_browser(report: dict[str, Any]) -> dict[str, Any]:
     normalized.get("input", {}).pop("path", None)
     normalized.get("verapdf", {}).pop("report_path", None)
     return normalized
+
+
+def run_local_fix(
+    filename: str,
+    payload: bytes,
+    checker: Callable[[Path, Path], dict[str, Any]],
+    title: str | None,
+    language: str | None,
+) -> dict[str, Any]:
+    """Review, apply the requested metadata fixes to a copy, and review that copy again.
+
+    Returns before/after reports, the remediation provenance record, and the
+    fixed PDF encoded for a browser download. Nothing is persisted.
+    """
+    before = run_local_review(filename, payload, checker)
+    remediation = MetadataRemediation.with_builtin_tools()
+    fixed_payload, remediation_report = remediation.apply(filename, payload, title=title, language=language)
+    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    after = run_local_review(fixed_filename, fixed_payload, checker)
+    return {
+        "before": normalize_report_for_browser(before),
+        "after": normalize_report_for_browser(after),
+        "remediation": remediation_report,
+        "fixed_filename": fixed_filename,
+        "fixed_pdf_base64": base64.b64encode(fixed_payload).decode("ascii"),
+    }
 
 
 def run_spike_checker(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
@@ -95,6 +124,7 @@ def create_server(
                 "/": ("local_reviewer.html", "text/html; charset=utf-8"),
                 "/index.html": ("local_reviewer.html", "text/html; charset=utf-8"),
                 "/delight-content.json": ("delight_content.json", "application/json; charset=utf-8"),
+                "/api/knowledge": ("rule_knowledge.json", "application/json; charset=utf-8"),
             }
             selected = static_files.get(request_url.path)
             if selected is None:
@@ -111,7 +141,7 @@ def create_server(
 
         def do_POST(self) -> None:  # noqa: N802
             request_url = urlparse(self.path)
-            if request_url.path != "/api/review":
+            if request_url.path not in {"/api/review", "/api/fix"}:
                 self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                 return
             try:
@@ -121,16 +151,26 @@ def create_server(
             if length <= 0 or length > MAX_PDF_BYTES:
                 self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "PDF must be between 1 byte and 50 MB."})
                 return
-            filename = parse_qs(request_url.query).get("filename", [""])[0]
+            query = parse_qs(request_url.query)
+            filename = query.get("filename", [""])[0]
             try:
-                report = run_local_review(filename, self.rfile.read(length), checker)
-            except UploadValidationError as error:
+                if request_url.path == "/api/review":
+                    payload = normalize_report_for_browser(run_local_review(filename, self.rfile.read(length), checker))
+                else:
+                    payload = run_local_fix(
+                        filename,
+                        self.rfile.read(length),
+                        checker,
+                        title=query.get("title", [None])[0],
+                        language=query.get("language", [None])[0],
+                    )
+            except (UploadValidationError, RemediationError) as error:
                 self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
                 return
             except Exception as error:  # Boundary: no stack traces to browser UI.
                 self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Local review could not complete: {type(error).__name__}"})
                 return
-            self.send_json(HTTPStatus.OK, normalize_report_for_browser(report))
+            self.send_json(HTTPStatus.OK, payload)
 
         def log_message(self, format: str, *_args: Any) -> None:
             return
@@ -141,7 +181,7 @@ def create_server(
 def main() -> int:
     server = create_server(8765, run_spike_checker)
     print("Coastline Accessibility Studio local reviewer: http://127.0.0.1:8765")
-    print("Loopback only · PDF-only · deterministic checks · no AI")
+    print("Loopback only · PDF-only · deterministic checks and fixes · no AI")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
