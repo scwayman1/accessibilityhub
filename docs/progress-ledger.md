@@ -7,6 +7,25 @@
 > its tests — the same evidence-before-claims discipline the product itself
 > enforces. Last updated: 2026-07-20.
 
+## Post-merge review fixes (2026-07-20)
+
+Three correctness findings from an automated review of the merged Learning-OS
+PR, all verified against the code and fixed as a follow-up (`tests/test_review_hardening.py`):
+
+- **Truthful evidence when the validator is absent.** When veraPDF cannot run
+  (Docker or the pinned image missing), `check_pdf.py` no longer emits the
+  `PDF.VERAPDF.UA1` advisory claiming "a report was generated." It emits a
+  `PDF.VERAPDF.UNAVAILABLE` `tool_failure_or_unsupported` finding instead, with
+  its own teaching card.
+- **Graceful degradation for encrypted PDFs without qpdf.** `analyze()` now
+  honors pypdf's own `is_encrypted` verdict before touching pages, so a
+  password-protected file returns a blocking-intake report instead of raising
+  when qpdf is unavailable.
+- **No cross-document evidence leak.** The workbench resets all
+  document-scoped state (`lastReport`, `lastFix`, `attestations`, fixed-copy
+  bytes) and returns to the pre-review layout when a new PDF is chosen, so an
+  exported receipt can never describe a previous document.
+
 ## Phase status at a glance
 
 | PRD phase | Status |
