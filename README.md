@@ -11,6 +11,7 @@ Canonical product documents:
 - [Product requirements — the accessibility learning journey](docs/prd-accessibility-learning-journey.md)
 - [AI tool chain, model router, BYOK and evaluation architecture](docs/ai-architecture-byok.md)
 - [Progress ledger — PRD phases vs shipped evidence](docs/progress-ledger.md)
+- [Next engineering loop — PRD and handoff](docs/next-loop-prd.md)
 - [Product assessment (July 2026)](docs/product-assessment-2026-07.md)
 - [Document editor vision](docs/document-editor-vision.md)
 - [Private beta intake gates](docs/tina-private-beta-intake.md)

@@ -126,13 +126,21 @@ product.
 
 ## Recommended next loop (in order)
 
+The next loop is fully specified as an executable, self-contained work order
+in [`next-loop-prd.md`](next-loop-prd.md) (written for pickup in a fresh
+agent/tool with no session context). Summary of its five increments:
+
 1. Authored micro-lessons attached to knowledge cards (PRD §11's
    encounter→transfer sequence) and the *practiced* mastery state they
    unlock.
 2. Alt-text writing back into PDFs (`/Alt`) for the PDF-must-remain cases —
-   the first Class-2 user-supplied-semantics repair from architecture §12.
+   the first Class-2 user-supplied-semantics repair from architecture §12,
+   with an honest tagged-vs-untagged decline path.
 3. Page rendering with findings anchored to locations.
 4. Lists/tables/landmarks in the HTML draft editor.
-5. Ground-truth corpus (architecture §23) before widening the rule set.
-6. The Phase 5 "first implementation ticket" from
-   `tina-private-beta-intake.md` when cloud beta becomes a priority.
+5. Ground-truth corpus (architecture §23) before widening the rule set,
+   including known-good documents that must not be "fixed."
+
+Beyond this loop: the Phase 5 "first implementation ticket" from
+`tina-private-beta-intake.md` when cloud beta becomes a priority, and the AI
+intelligence layer only after `ai-architecture-byok.md` §31 is addressed.
