@@ -2,6 +2,7 @@
 """Loopback-only local PDF reviewer for Coastline Accessibility Studio."""
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
@@ -12,7 +13,13 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from tina.derive import DerivationError, HtmlDraftConverter
+from tina.evidence import build_receipt
+from tina.learning import LearningJourney
+from tina.remedy import MetadataRemediation, RemediationError
+
 MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_JSON_BYTES = 10 * 1024 * 1024
 
 
 class UploadValidationError(ValueError):
@@ -52,6 +59,41 @@ def normalize_report_for_browser(report: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def run_local_fix(
+    filename: str,
+    payload: bytes,
+    checker: Callable[[Path, Path], dict[str, Any]],
+    title: str | None,
+    language: str | None,
+) -> dict[str, Any]:
+    """Review, apply the requested metadata fixes to a copy, and review that copy again.
+
+    Returns before/after reports, the remediation provenance record, and the
+    fixed PDF encoded for a browser download. Nothing is persisted.
+    """
+    before = run_local_review(filename, payload, checker)
+    remediation = MetadataRemediation.with_builtin_tools()
+    fixed_payload, remediation_report = remediation.apply(filename, payload, title=title, language=language)
+    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    after = run_local_review(fixed_filename, fixed_payload, checker)
+    return {
+        "before": normalize_report_for_browser(before),
+        "after": normalize_report_for_browser(after),
+        "remediation": remediation_report,
+        "fixed_filename": fixed_filename,
+        "fixed_pdf_base64": base64.b64encode(fixed_payload).decode("ascii"),
+    }
+
+
+def run_local_convert(filename: str, payload: bytes) -> dict[str, Any]:
+    """Derive an editable HTML working copy from the PDF without mutating or persisting it."""
+    validate_pdf_upload(filename, payload)
+    converter = HtmlDraftConverter.with_builtin_tools()
+    report = converter.convert(filename, payload)
+    report["draft_filename"] = f"{Path(filename).stem}.draft.html"
+    return report
+
+
 def run_spike_checker(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
     """Invoke the deterministic checker and return its structured local report."""
     script = Path(__file__).with_name("check_pdf.py")
@@ -73,8 +115,37 @@ def run_spike_checker(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
 def create_server(
     port: int,
     checker: Callable[[Path, Path], dict[str, Any]],
+    journey: LearningJourney | None = None,
 ) -> ThreadingHTTPServer:
     """Create a localhost-only HTTP server for the browser workbench."""
+    if journey is None:
+        journey = LearningJourney()  # in-memory unless a persistent journey is supplied
+
+    def record_review_event(report: dict[str, Any]) -> None:
+        try:
+            journey.record_review(
+                (report.get("input") or {}).get("sha256"),
+                [item.get("rule_id") for item in report.get("findings", [])],
+            )
+        except Exception:  # Learning must never break a review.
+            pass
+
+    def record_fix_event(result: dict[str, Any]) -> None:
+        try:
+            before = result["before"]
+            after_ids = {item.get("rule_id") for item in result["after"].get("findings", [])}
+            resolved = [
+                item.get("rule_id")
+                for item in before.get("findings", [])
+                if item.get("rule_id") not in after_ids
+            ]
+            journey.record_review(
+                (before.get("input") or {}).get("sha256"),
+                [item.get("rule_id") for item in before.get("findings", [])],
+            )
+            journey.record_fix((before.get("input") or {}).get("sha256"), resolved)
+        except Exception:
+            pass
 
     class LocalReviewerHandler(BaseHTTPRequestHandler):
         def send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -91,10 +162,14 @@ def create_server(
             if request_url.path == "/api/health":
                 self.send_json(HTTPStatus.OK, {"ok": True, "scope": "loopback-only", "ai": False})
                 return
+            if request_url.path == "/api/journey":
+                self.send_json(HTTPStatus.OK, journey.journey())
+                return
             static_files = {
                 "/": ("local_reviewer.html", "text/html; charset=utf-8"),
                 "/index.html": ("local_reviewer.html", "text/html; charset=utf-8"),
                 "/delight-content.json": ("delight_content.json", "application/json; charset=utf-8"),
+                "/api/knowledge": ("rule_knowledge.json", "application/json; charset=utf-8"),
             }
             selected = static_files.get(request_url.path)
             if selected is None:
@@ -109,28 +184,80 @@ def create_server(
             self.end_headers()
             self.wfile.write(encoded)
 
+        def read_json_body(self, length: int) -> dict[str, Any] | None:
+            if length <= 0 or length > MAX_JSON_BYTES:
+                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body must be JSON under 10 MB."})
+                return None
+            try:
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise ValueError
+                return body
+            except (json.JSONDecodeError, ValueError):
+                self.send_json(HTTPStatus.BAD_REQUEST, {"error": "Request body must be a JSON object."})
+                return None
+
         def do_POST(self) -> None:  # noqa: N802
             request_url = urlparse(self.path)
-            if request_url.path != "/api/review":
-                self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-                return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = 0
+
+            if request_url.path == "/api/attest":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                journey.record_attestation(str(body.get("rule_id", "")), str(body.get("decision", "")))
+                self.send_json(HTTPStatus.OK, journey.journey())
+                return
+            if request_url.path == "/api/receipt":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    receipt = build_receipt(
+                        review=body.get("review") or {},
+                        after=body.get("after"),
+                        remediation=body.get("remediation"),
+                        attestations=body.get("attestations"),
+                    )
+                except ValueError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                self.send_json(HTTPStatus.OK, receipt)
+                return
+
+            if request_url.path not in {"/api/review", "/api/fix", "/api/convert"}:
+                self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                return
             if length <= 0 or length > MAX_PDF_BYTES:
                 self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "PDF must be between 1 byte and 50 MB."})
                 return
-            filename = parse_qs(request_url.query).get("filename", [""])[0]
+            query = parse_qs(request_url.query)
+            filename = query.get("filename", [""])[0]
             try:
-                report = run_local_review(filename, self.rfile.read(length), checker)
-            except UploadValidationError as error:
+                if request_url.path == "/api/review":
+                    payload = normalize_report_for_browser(run_local_review(filename, self.rfile.read(length), checker))
+                    record_review_event(payload)
+                elif request_url.path == "/api/convert":
+                    payload = run_local_convert(filename, self.rfile.read(length))
+                else:
+                    payload = run_local_fix(
+                        filename,
+                        self.rfile.read(length),
+                        checker,
+                        title=query.get("title", [None])[0],
+                        language=query.get("language", [None])[0],
+                    )
+                    record_fix_event(payload)
+            except (UploadValidationError, RemediationError, DerivationError) as error:
                 self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
                 return
             except Exception as error:  # Boundary: no stack traces to browser UI.
                 self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Local review could not complete: {type(error).__name__}"})
                 return
-            self.send_json(HTTPStatus.OK, normalize_report_for_browser(report))
+            self.send_json(HTTPStatus.OK, payload)
 
         def log_message(self, format: str, *_args: Any) -> None:
             return
@@ -139,9 +266,10 @@ def create_server(
 
 
 def main() -> int:
-    server = create_server(8765, run_spike_checker)
+    journey = LearningJourney(Path.home() / ".coastline-studio" / "journey.json")
+    server = create_server(8765, run_spike_checker, journey=journey)
     print("Coastline Accessibility Studio local reviewer: http://127.0.0.1:8765")
-    print("Loopback only · PDF-only · deterministic checks · no AI")
+    print("Loopback only · PDF-only · deterministic · works without AI")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
