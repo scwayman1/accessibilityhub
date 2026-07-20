@@ -69,9 +69,13 @@ boundaries), the rule taxonomy, the knowledge cards, and the delight voice.
 
 ## Sequencing
 
-1. **Now (shipped):** metadata fix loop with before/after evidence.
-2. **Next:** image extraction + alt-text authoring in the workbench; page
-   rendering with anchored findings.
+1. **Now (shipped):** metadata fix loop with before/after evidence, and the
+   PDF → editable HTML working copy (`tina/derive.py`) whose embedded toolbar
+   handles title, language, headings, text corrections, and per-image
+   alt-or-decorative decisions, exporting clean HTML. This is the seed of
+   Tool 2 growing inside Tool 1.
+2. **Next:** alt-text writing back into the PDF (`/Alt`) for cases where PDF
+   must remain the deliverable; page rendering with anchored findings.
 3. **Then:** DOCX checking (fix-at-source for the dominant real workflow),
    ground-truth corpus validation of the taxonomy.
 4. **Endgame:** the structured author with tagged-PDF export, once the checker

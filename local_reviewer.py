@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from tina.derive import DerivationError, HtmlDraftConverter
 from tina.remedy import MetadataRemediation, RemediationError
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
@@ -81,6 +82,15 @@ def run_local_fix(
     }
 
 
+def run_local_convert(filename: str, payload: bytes) -> dict[str, Any]:
+    """Derive an editable HTML working copy from the PDF without mutating or persisting it."""
+    validate_pdf_upload(filename, payload)
+    converter = HtmlDraftConverter.with_builtin_tools()
+    report = converter.convert(filename, payload)
+    report["draft_filename"] = f"{Path(filename).stem}.draft.html"
+    return report
+
+
 def run_spike_checker(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
     """Invoke the deterministic checker and return its structured local report."""
     script = Path(__file__).with_name("check_pdf.py")
@@ -141,7 +151,7 @@ def create_server(
 
         def do_POST(self) -> None:  # noqa: N802
             request_url = urlparse(self.path)
-            if request_url.path not in {"/api/review", "/api/fix"}:
+            if request_url.path not in {"/api/review", "/api/fix", "/api/convert"}:
                 self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                 return
             try:
@@ -156,6 +166,8 @@ def create_server(
             try:
                 if request_url.path == "/api/review":
                     payload = normalize_report_for_browser(run_local_review(filename, self.rfile.read(length), checker))
+                elif request_url.path == "/api/convert":
+                    payload = run_local_convert(filename, self.rfile.read(length))
                 else:
                     payload = run_local_fix(
                         filename,
@@ -164,7 +176,7 @@ def create_server(
                         title=query.get("title", [None])[0],
                         language=query.get("language", [None])[0],
                     )
-            except (UploadValidationError, RemediationError) as error:
+            except (UploadValidationError, RemediationError, DerivationError) as error:
                 self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
                 return
             except Exception as error:  # Boundary: no stack traces to browser UI.

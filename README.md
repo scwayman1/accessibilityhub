@@ -87,6 +87,23 @@ The workbench closes the loop on the findings it can deterministically resolve:
   routed to human review; the fix banner states explicitly that resolving
   technical findings is not a conformance result.
 
+### HTML working copy — convert the asset and make the improvements
+
+When repairing the PDF is the wrong medium, the workbench derives an editable
+HTML working copy instead:
+
+- `POST /api/convert` runs `tina/derive.py` (`extract_html_draft`, gated by the
+  `document.derive.html_draft` permission, `mutates_document=False`). It
+  deterministically extracts text blocks and images into a structured HTML
+  draft, carrying over the source title/language only if they actually exist.
+- The draft embeds a self-contained, offline improvement toolbar: set the
+  title and language, promote text blocks to headings, correct extracted text
+  in place, and describe each image or mark it decorative. A live checklist
+  tracks the decisions still needed.
+- "Export clean HTML" strips all editing chrome and produces a working HTML
+  document — the accessible-HTML deliverable path from the editor vision. The
+  draft banner states it is a re-authoring workspace, not a conformance result.
+
 If qpdf or Docker is not installed, the review no longer fails: the missing
 tool is reported as an explicit `tool_failure_or_unsupported` finding and the
 review completes with the evidence it can gather.
