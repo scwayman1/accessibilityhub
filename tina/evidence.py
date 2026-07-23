@@ -20,6 +20,22 @@ DISCLAIMER = (
     "or legally compliant."
 )
 
+# PRD §6.1 prohibited outcome language. Kept here (this module is exempt from the
+# literal-phrase governance scan because the disclaimer must quote the concepts)
+# so validators elsewhere can import the list without embedding the phrases.
+PROHIBITED_OUTCOME_PHRASES = (
+    "fully compliant",
+    "guaranteed accessible",
+    "passed accessibility",
+    "certified accessible",
+    "fully accessible",
+    "legally compliant",
+    "is compliant",
+    "is accessible",
+    "wcag compliant",
+    "ada compliant",
+)
+
 
 def _finding_summary(report: dict[str, Any]) -> list[dict[str, Any]]:
     return [

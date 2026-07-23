@@ -26,6 +26,34 @@ PR, all verified against the code and fixed as a follow-up (`tests/test_review_h
   bytes) and returns to the pre-review layout when a new PDF is chosen, so an
   exported receipt can never describe a previous document.
 
+## Engineering loop — gamification + BYOK intelligence (2026-07-22)
+
+- **Motivational design shipped (PRD §12):** Accessibility Points awarded only
+  for evidence-producing actions (`tina/learning.py` `POINT_VALUES`), humane
+  practice streaks with a grace day and no punitive language, six
+  evidence-based badges, and named milestones — all derived deterministically
+  from the existing event log, with an explicit "practice, not compliance"
+  claim boundary. Workbench HUD shows points, streak, milestone progress,
+  "+N points earned" celebrations, and badge chips.
+  Tests: `tests/test_gamification.py`.
+- **Coastline College Foundation interstitials:** authored, deterministic,
+  disable-able ad breaks (`foundation_ads.json`) shown during scans and after
+  verified fixes, with an explicit sponsor disclosure line. Governance-scanned
+  like every other surface.
+- **BYOK intelligence layer shipped (AI architecture Phase 1, Modes 2–3):**
+  `tina/intelligence.py` — provider-neutral gateway (OpenAI-compatible:
+  Ollama/vLLM/OpenRouter/OpenAI, plus Anthropic), capability handshake, keys
+  held in process memory only and never present in status output, per-request
+  egress manifest with explicit consent, evidence-only payloads inside an
+  untrusted-data boundary, schema-validated output with prohibited-claim
+  rejection, and fail-closed fallback to the authored teaching card. One
+  bounded task: `explain_finding` (Review Interpreter). Endpoints
+  `/api/ai/configure`, `/api/ai/status`, `/api/ai/manifest`,
+  `/api/ai/explain`. Tests: `tests/test_intelligence.py` (fake loopback
+  model endpoint; consent, key-leak, prohibited-claim, injection-boundary,
+  fail-closed cases). The deterministic engine remains the sole authority
+  for findings, mutations, rechecks, and receipts.
+
 ## Phase status at a glance
 
 | PRD phase | Status |

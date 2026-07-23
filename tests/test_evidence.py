@@ -90,6 +90,8 @@ class OutcomeLanguageGovernanceTests(unittest.TestCase):
         "tina/remedy.py",
         "tina/derive.py",
         "tina/learning.py",
+        "tina/intelligence.py",
+        "foundation_ads.json",
     ]
 
     def test_product_surfaces_never_use_prohibited_outcome_language(self):

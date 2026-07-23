@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from tina.derive import DerivationError, HtmlDraftConverter
 from tina.evidence import build_receipt
+from tina.intelligence import IntelligenceError, IntelligenceGateway
 from tina.learning import LearningJourney
 from tina.remedy import MetadataRemediation, RemediationError
 
@@ -116,10 +117,13 @@ def create_server(
     port: int,
     checker: Callable[[Path, Path], dict[str, Any]],
     journey: LearningJourney | None = None,
+    intelligence: IntelligenceGateway | None = None,
 ) -> ThreadingHTTPServer:
     """Create a localhost-only HTTP server for the browser workbench."""
     if journey is None:
         journey = LearningJourney()  # in-memory unless a persistent journey is supplied
+    if intelligence is None:
+        intelligence = IntelligenceGateway()  # deterministic-only until configured
 
     def record_review_event(report: dict[str, Any]) -> None:
         try:
@@ -165,11 +169,15 @@ def create_server(
             if request_url.path == "/api/journey":
                 self.send_json(HTTPStatus.OK, journey.journey())
                 return
+            if request_url.path == "/api/ai/status":
+                self.send_json(HTTPStatus.OK, intelligence.status())
+                return
             static_files = {
                 "/": ("local_reviewer.html", "text/html; charset=utf-8"),
                 "/index.html": ("local_reviewer.html", "text/html; charset=utf-8"),
                 "/delight-content.json": ("delight_content.json", "application/json; charset=utf-8"),
                 "/api/knowledge": ("rule_knowledge.json", "application/json; charset=utf-8"),
+                "/foundation-ads.json": ("foundation_ads.json", "application/json; charset=utf-8"),
             }
             selected = static_files.get(request_url.path)
             if selected is None:
@@ -225,7 +233,48 @@ def create_server(
                 except ValueError as error:
                     self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
                     return
+                try:
+                    journey.record_activity("receipt", receipt.get("input", {}).get("sha256"))
+                except Exception:
+                    pass
                 self.send_json(HTTPStatus.OK, receipt)
+                return
+            if request_url.path == "/api/ai/configure":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    status = intelligence.configure(
+                        base_url=str(body.get("base_url", "")),
+                        model=str(body.get("model", "")),
+                        api_key=str(body["api_key"]) if body.get("api_key") else None,
+                        provider=str(body.get("provider", "openai_compatible")),
+                    )
+                except IntelligenceError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                self.send_json(HTTPStatus.OK, status)
+                return
+            if request_url.path == "/api/ai/manifest":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                self.send_json(HTTPStatus.OK, IntelligenceGateway.egress_manifest(body.get("finding") or {}))
+                return
+            if request_url.path == "/api/ai/explain":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    explanation = intelligence.explain_finding(
+                        finding=body.get("finding") or {},
+                        knowledge_card=body.get("knowledge_card") or {},
+                        consent=bool(body.get("consent")),
+                    )
+                except IntelligenceError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error), "fallback": "authored_card"})
+                    return
+                self.send_json(HTTPStatus.OK, explanation)
                 return
 
             if request_url.path not in {"/api/review", "/api/fix", "/api/convert"}:
@@ -242,6 +291,10 @@ def create_server(
                     record_review_event(payload)
                 elif request_url.path == "/api/convert":
                     payload = run_local_convert(filename, self.rfile.read(length))
+                    try:
+                        journey.record_activity("convert", payload.get("source_sha256"))
+                    except Exception:
+                        pass
                 else:
                     payload = run_local_fix(
                         filename,
