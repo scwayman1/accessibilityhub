@@ -37,6 +37,7 @@ POINT_VALUES = {
     "attestation": 15,     # per judgment decision recorded
     "convert": 20,         # per HTML working copy created
     "receipt": 15,         # per evidence receipt exported
+    "lesson": 10,          # per distinct lesson answered correctly
     "sustained_skill": 50, # per skill currently sustained
 }
 
@@ -63,6 +64,8 @@ BADGES = [
      "description": "Kept a learned defect from recurring across later documents."},
     {"id": "streak_keeper", "label": "Streak Keeper",
      "description": f"Practiced on {STREAK_BADGE_DAYS} days in a row."},
+    {"id": "guided_learner", "label": "Guided Learner",
+     "description": "Completed a micro-lesson and got the judgment call right."},
 ]
 
 # Skill map: PRD skill-map worlds, keyed by the deterministic rules that feed them.
@@ -163,14 +166,26 @@ class LearningJourney:
             return
         self._record({"type": activity, "document": _doc_id(document_sha256)})
 
+    def record_lesson(self, skill: str, lesson_id: str, passed: bool) -> None:
+        """Record a guided-practice result. Only a passed lesson is evidence."""
+        if skill not in SKILLS or not lesson_id or not passed:
+            return
+        self._record({"type": "lesson_passed", "skill": skill, "lesson_id": lesson_id})
+
     def _skill_mastery(self, skill: str) -> dict[str, Any]:
         introduced_at = None
+        practiced = False
         applied = False
         verified_index = None
+        lessons_passed: list[str] = []
         for index, event in enumerate(self.events):
             if event["type"] == "review" and skill in event.get("skills_with_findings", []):
                 if introduced_at is None:
                     introduced_at = event["recorded_at"]
+            if event["type"] == "lesson_passed" and event.get("skill") == skill:
+                practiced = True
+                if event["lesson_id"] not in lessons_passed:
+                    lessons_passed.append(event["lesson_id"])
             if event["type"] == "attestation" and event.get("skill") == skill:
                 applied = True
             if event["type"] == "fix_verified" and skill in event.get("skills", []):
@@ -180,6 +195,10 @@ class LearningJourney:
         state = "not_started"
         if introduced_at is not None:
             state = "introduced"
+        # A passed lesson is guided practice: it can start a skill or advance an
+        # introduced one, but it never outranks real-document evidence below.
+        if practiced:
+            state = "practiced"
         if applied:
             state = "applied"
         if verified_index is not None:
@@ -200,7 +219,9 @@ class LearningJourney:
                 elif event["document"] not in clean_documents:
                     clean_documents.append(event["document"])
             if regressed:
-                state = "introduced"
+                # The defect came back, so demonstrated mastery is not sustained —
+                # but guided practice already completed is not erased.
+                state = "practiced" if practiced else "introduced"
             elif len(clean_documents) >= SUSTAIN_DOCUMENTS:
                 state = "sustained"
 
@@ -208,6 +229,7 @@ class LearningJourney:
             "state": state,
             "introduced_at": introduced_at,
             "regressed": regressed,
+            "lessons_passed": lessons_passed,
             "clean_documents_since_verified": len(clean_documents),
             "clean_documents_needed_for_sustained": max(0, SUSTAIN_DOCUMENTS - len(clean_documents)),
         }
@@ -264,6 +286,8 @@ class LearningJourney:
             "attestation": sum(1 for e in self.events if e["type"] == "attestation"),
             "convert": sum(1 for e in self.events if e["type"] == "convert"),
             "receipt": sum(1 for e in self.events if e["type"] == "receipt"),
+            # Distinct lessons only: repeating one you already passed earns nothing.
+            "lesson": len({e["lesson_id"] for e in self.events if e["type"] == "lesson_passed"}),
             "sustained_skill": sum(1 for state in skills_state.values() if state["state"] == "sustained"),
         }
         breakdown = {key: counts[key] * POINT_VALUES[key] for key in POINT_VALUES}
@@ -290,6 +314,7 @@ class LearningJourney:
             ),
             "sustained_practice": any(state["state"] == "sustained" for state in skills_state.values()),
             "streak_keeper": streak_days >= STREAK_BADGE_DAYS,
+            "guided_learner": any(e["type"] == "lesson_passed" for e in self.events),
         }
         return [{**badge, "earned": earned[badge["id"]]} for badge in BADGES]
 

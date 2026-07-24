@@ -17,6 +17,7 @@ from tina.derive import DerivationError, HtmlDraftConverter
 from tina.evidence import build_receipt
 from tina.intelligence import IntelligenceError, IntelligenceGateway
 from tina.learning import LearningJourney
+from tina.lessons import LessonError, LessonLibrary
 from tina.remedy import MetadataRemediation, RemediationError
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
@@ -124,6 +125,10 @@ def create_server(
         journey = LearningJourney()  # in-memory unless a persistent journey is supplied
     if intelligence is None:
         intelligence = IntelligenceGateway()  # deterministic-only until configured
+    try:
+        lessons: LessonLibrary | None = LessonLibrary()
+    except LessonError:  # Lessons are optional; a review never depends on them.
+        lessons = None
 
     def record_review_event(report: dict[str, Any]) -> None:
         try:
@@ -171,6 +176,13 @@ def create_server(
                 return
             if request_url.path == "/api/ai/status":
                 self.send_json(HTTPStatus.OK, intelligence.status())
+                return
+            if request_url.path == "/api/lessons":
+                if lessons is None:
+                    self.send_json(HTTPStatus.OK, {"lessons": [], "note": "Lesson content is unavailable."})
+                    return
+                skill = parse_qs(request_url.query).get("skill", [None])[0]
+                self.send_json(HTTPStatus.OK, lessons.catalog(skill))
                 return
             static_files = {
                 "/": ("local_reviewer.html", "text/html; charset=utf-8"),
@@ -238,6 +250,21 @@ def create_server(
                 except Exception:
                     pass
                 self.send_json(HTTPStatus.OK, receipt)
+                return
+            if request_url.path == "/api/lesson-result":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                if lessons is None:
+                    self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Lesson content is unavailable."})
+                    return
+                try:
+                    result = lessons.score(str(body.get("lesson_id", "")), body.get("chosen_index"))
+                except LessonError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                journey.record_lesson(result["skill"], result["lesson_id"], result["correct"])
+                self.send_json(HTTPStatus.OK, {**result, "journey": journey.journey()})
                 return
             if request_url.path == "/api/ai/configure":
                 body = self.read_json_body(length)

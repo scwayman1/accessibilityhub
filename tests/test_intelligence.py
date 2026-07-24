@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-from tina.intelligence import IntelligenceError, IntelligenceGateway
+from tina.intelligence import IntelligenceError, IntelligenceGateway, detect_conformance_claim
 
 FINDING = {"rule_id": "PDF.METADATA.LANGUAGE", "category": "deterministic_defect",
            "severity": "medium", "evidence": "No primary document language metadata was found."}
@@ -124,6 +124,42 @@ class IntelligenceGatewayTests(unittest.TestCase):
         with self.assertRaises(IntelligenceError):
             gateway.configure("http://127.0.0.1:9", "test-model")
         self.assertEqual(gateway.status()["mode"], "deterministic_only")
+
+    def test_conformance_claims_are_caught_beyond_the_exact_phrase_list(self):
+        """A model can claim conformance in unlimited phrasings; catch the shape."""
+        for claim in [
+            "This document passes WCAG 2.2.",
+            "The file now satisfies PDF/UA requirements.",
+            "It meets Section 508.",
+            "This conforms to the accessibility standard.",
+            "Your PDF complies with ADA.",
+            "The document has achieved conformance.",
+            "This meets all accessibility requirements.",
+            "The document is fully accessible.",
+        ]:
+            self.assertIsNotNone(detect_conformance_claim(claim), f"missed claim: {claim}")
+
+    def test_legitimate_explanations_are_not_false_positives(self):
+        for allowed in [
+            "A screen reader may apply an incorrect pronunciation profile.",
+            "This finding was resolved and rechecked; a human still needs to review the tags.",
+            "Passing this to a specialist is a good next step.",
+            "Students meet barriers when headings are only visual.",
+            "The language property is missing from the document catalog.",
+        ]:
+            self.assertIsNone(detect_conformance_claim(allowed), f"false positive: {allowed}")
+
+    def test_model_output_claiming_standard_conformance_is_rejected(self):
+        sneaky = dict(GOOD_EXPLANATION, prevention="Once fixed, the document passes WCAG 2.2.")
+        fake = FakeModelServer(json.dumps(sneaky))
+        try:
+            gateway = IntelligenceGateway()
+            gateway.configure(fake.base_url, "test-model")
+            with self.assertRaises(IntelligenceError) as context:
+                gateway.explain_finding(FINDING, CARD, consent=True)
+            self.assertIn("prohibited conformance claim", str(context.exception))
+        finally:
+            fake.close()
 
     def test_prompt_wraps_evidence_in_untrusted_boundary(self):
         fake = FakeModelServer(json.dumps(GOOD_EXPLANATION))

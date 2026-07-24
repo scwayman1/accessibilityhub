@@ -54,13 +54,39 @@ PR, all verified against the code and fixed as a follow-up (`tests/test_review_h
   fail-closed cases). The deterministic engine remains the sole authority
   for findings, mutations, rechecks, and receipts.
 
+## Engineering loop — micro-lessons and the practiced state (2026-07-24)
+
+- **Authored micro-lessons shipped (PRD §11, next-loop Increment 1):**
+  `lesson_content.json` carries one lesson per skill in the skill map, each
+  following the full encounter → experience → explain → decide → verify →
+  transfer sequence. `tina/lessons.py` loads, validates (unknown skill,
+  duplicate id, out-of-range answer, missing rationale, exactly one decide
+  step), and scores by exact match — no generation, no adaptive difficulty.
+  The browser catalog withholds correct answers until scoring.
+- **The `practiced` mastery state is now reachable.** A passed lesson advances
+  a skill from `not_started`/`introduced` to `practiced` and never outranks
+  real-document evidence (`applied`/`verified`/`sustained`). Regression after a
+  recurrence falls back to `practiced` rather than erasing completed practice.
+  Distinct lessons earn points once; a Guided Learner badge marks the first
+  correct judgment call. Endpoints `GET /api/lessons`,
+  `POST /api/lesson-result`; the finding detail panel offers "Practice this
+  skill" inline. Tests: `tests/test_lessons.py` (including a coverage test that
+  fails CI if any skill ships without a lesson).
+- **Post-review hardening of the AI boundary (P1 from automated review):** the
+  prohibited-claim validator caught only exact phrases, so a model could assert
+  "This document passes WCAG 2.2" or "satisfies PDF/UA" and have it displayed.
+  `tina/intelligence.py` now detects the *shape* of a conformance claim — an
+  assertion verb pointed at a standard — alongside the phrase list, verified
+  against eight claim phrasings with no false positives on legitimate
+  explanations. Tests: `tests/test_intelligence.py`.
+
 ## Phase status at a glance
 
 | PRD phase | Status |
 |---|---|
 | 1. Honest Local Review | **Shipped** (spike scope: PDF only) |
 | 2. Fix and Verify | **Shipped** (metadata repairs; evidence receipts; judgment attestations) |
-| 3. Learning Journey | **Tracer bullet shipped** (evidence-based mastery, repeat-defect tracking; lessons/challenges not yet built) |
+| 3. Learning Journey | **Substantially shipped** (evidence-based mastery incl. practiced via authored micro-lessons, points/streaks/badges, repeat-defect tracking; challenges and portfolio not yet built) |
 | 4. HTML Escape Hatch | **Shipped** (extraction draft + offline editor; AI-assisted reconstruction not built) |
 | 5. Institutional Transformation | **Not started** (design only: `tina-private-beta-intake.md`) |
 | AI intelligence layer | **Not started by design** (architecture doc governs any future work; Mode 1 "Deterministic Only" is the shipped product) |

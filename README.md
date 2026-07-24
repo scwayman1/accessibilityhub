@@ -138,6 +138,13 @@ The workbench closes the loop on the findings it can deterministically resolve:
   Corny-but-honest **Coastline College Foundation** interstitials (authored in
   `foundation_ads.json`, clearly disclosed, disable-able) appear during scans
   and after wins.
+- **Micro-lessons** turn each finding into three-to-five minutes of guided
+  practice (`lesson_content.json`, `GET /api/lessons`): what a student
+  experiences, why it happens, one judgment call to make, and how to prevent it
+  next time. Getting the call right advances that skill to **practiced** — the
+  rung between "the defect appeared" and "you fixed it in a real document." A
+  wrong answer explains the distinction and lets you try again; it never
+  punishes and never advances mastery.
 - An optional **bring-your-own-model intelligence layer**
   (`tina/intelligence.py`) can explain findings in plain language: connect any
   OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, OpenAI) or Anthropic.

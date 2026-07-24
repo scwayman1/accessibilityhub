@@ -118,7 +118,15 @@ machine records.
 
 ---
 
-### Increment 1 — Authored micro-lessons and the `practiced` state (highest priority)
+### Increment 1 — Authored micro-lessons and the `practiced` state · ✅ SHIPPED 2026-07-24
+
+> Delivered as specified: `lesson_content.json` (one lesson per skill, full
+> encounter→transfer sequence), `tina/lessons.py` (load/validate/score),
+> `record_lesson` advancing mastery to `practiced` without outranking
+> real-document evidence, `GET /api/lessons` + `POST /api/lesson-result`, an
+> inline "Practice this skill" flow in the finding detail panel, and
+> `tests/test_lessons.py` with skill-coverage enforcement. Start at
+> Increment 2 below.
 
 **Why.** The product's thesis is behavior change, and the mastery ladder has a
 missing rung: `practiced`. A lesson gives the user a safe place to demonstrate

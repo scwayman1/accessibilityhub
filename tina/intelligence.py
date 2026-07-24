@@ -19,6 +19,7 @@ evidence in plain language. It implements the architecture's hard boundaries:
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -26,6 +27,27 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tina.evidence import PROHIBITED_OUTCOME_PHRASES
+
+# Exact phrases are not enough: a model can claim conformance in unlimited
+# phrasings ("passes WCAG", "satisfies PDF/UA", "meets Section 508"). Catch the
+# shape of the claim — an assertion verb pointed at a standard — not just its
+# wording. Only the deterministic engine and human reviewers decide conformance.
+_CLAIM_VERBS = r"(?:pass(?:es|ed|ing)?|meet(?:s|ing)?|satisf(?:y|ies|ied)|conform(?:s|ing)?|compl(?:y|ies|iant)|adher(?:e|es|ing)|certif(?:y|ies|ied)|achiev(?:e|es|ed))"
+_STANDARDS = r"(?:wcag|pdf/?ua|section\s*508|ada\b|en\s*301\s*549|aoda|accessibility\s+(?:standard|requirement|guideline|criteria|conformance|compliance)s?|conformance|compliance)"
+CONFORMANCE_CLAIM_PATTERN = re.compile(
+    rf"\b{_CLAIM_VERBS}\b(?:\s+\w+){{0,4}}?\s+(?:with\s+|to\s+)?{_STANDARDS}",
+    re.IGNORECASE,
+)
+
+
+def detect_conformance_claim(text: str) -> str | None:
+    """Return the offending fragment if the text asserts conformance, else None."""
+    lowered = text.lower()
+    for phrase in PROHIBITED_OUTCOME_PHRASES:
+        if phrase in lowered:
+            return phrase
+    match = CONFORMANCE_CLAIM_PATTERN.search(text)
+    return match.group(0).strip() if match else None
 
 REQUEST_TIMEOUT_SECONDS = 60
 MAX_EVIDENCE_CHARS = 600
@@ -195,13 +217,12 @@ class IntelligenceGateway:
             if not isinstance(value, str) or not value.strip():
                 raise IntelligenceError(f"The model response is missing the '{fieldname}' field.")
             result[fieldname] = value.strip()[:2000]
-        combined = " ".join(result.values()).lower()
-        for phrase in PROHIBITED_OUTCOME_PHRASES:
-            if phrase in combined:
-                raise IntelligenceError(
-                    "The model output made a prohibited conformance claim and was rejected. "
-                    "The authored teaching card remains authoritative."
-                )
+        offending = detect_conformance_claim(" ".join(result.values()))
+        if offending:
+            raise IntelligenceError(
+                f"The model output made a prohibited conformance claim ({offending!r}) and was "
+                "rejected. The authored teaching card remains authoritative."
+            )
         return result
 
     # -- provider adapters --------------------------------------------------
