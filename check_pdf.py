@@ -211,6 +211,19 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
         ))
         reader = None
 
+    # Honor pypdf's own encryption verdict before touching pages. When qpdf is
+    # unavailable the qpdf-derived `encrypted` flag above can be False for a
+    # password-protected file; accessing pages would then raise instead of
+    # degrading to a clean blocking-intake report.
+    if reader is not None and reader.is_encrypted and not encrypted:
+        findings.append(finding(
+            "blocking_technical_failure", "PDF.INTAKE.ENCRYPTED", "high", "document catalog",
+            "PDF is encrypted or password-protected.",
+            "Do not process this file in the spike; request an authorized unencrypted source copy.",
+        ))
+        encrypted = True
+        reader = None
+
     metadata: dict[str, Any] = {}
     if reader is not None:
         root = indirect(reader.trailer.get("/Root", {})) or {}
@@ -223,12 +236,6 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             "marked": bool((indirect(root.get("/MarkInfo", {})) or {}).get("/Marked", False)),
             "has_structure_tree": bool(root.get("/StructTreeRoot")),
         }
-        if reader.is_encrypted:
-            findings.append(finding(
-                "blocking_technical_failure", "PDF.INTAKE.ENCRYPTED", "high", "document catalog",
-                "PDF is encrypted or password-protected.",
-                "Do not process this file in the spike; request an authorized unencrypted source copy.",
-            ))
         if not metadata["title"]:
             findings.append(finding(
                 "deterministic_defect", "PDF.METADATA.TITLE", "medium", "document information dictionary",
@@ -297,11 +304,18 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
     qpdf_blocking = not tool_missing(qpdf) and qpdf["returncode"] != 0
     if not qpdf_blocking and not encrypted and reader is not None:
         verapdf = run_verapdf(pdf, output_dir)
-        findings.append(finding(
-            "advisory", "PDF.VERAPDF.UA1", "info", "veraPDF report",
-            "veraPDF UA-1 profile report was generated as experimental technical evidence only.",
-            "Review the raw report alongside the Coastline rule pack; do not convert its outcome into a conformance claim.",
-        ))
+        if verapdf.get("tool_available") is False:
+            findings.append(finding(
+                "tool_failure_or_unsupported", "PDF.VERAPDF.UNAVAILABLE", "medium", "reviewer toolchain",
+                (verapdf.get("stderr") or "The veraPDF validator did not run.").strip()[:1000],
+                "Make the pinned veraPDF image available locally to include UA-1 validator evidence in future reviews.",
+            ))
+        else:
+            findings.append(finding(
+                "advisory", "PDF.VERAPDF.UA1", "info", "veraPDF report",
+                "veraPDF UA-1 profile report was generated as experimental technical evidence only.",
+                "Review the raw report alongside the Coastline rule pack; do not convert its outcome into a conformance claim.",
+            ))
     else:
         verapdf = {
             "image": VERAPDF_IMAGE,

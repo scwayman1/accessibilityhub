@@ -76,6 +76,13 @@
       "fix_at_source": "Export a fresh PDF from the original source document, then review again.",
       "auto_fixable": false
     },
+    "PDF.VERAPDF.UNAVAILABLE": {
+      "title": "Validator not available",
+      "why_it_matters": "The containerized veraPDF validator did not run on this computer, so the machine-checkable PDF/UA evidence is missing from this review. The findings you see are still valid; the report is just less complete.",
+      "who_it_affects": "The completeness of this review only — not the document itself.",
+      "fix_at_source": "Make the pinned veraPDF image available locally so future reviews can include validator evidence.",
+      "auto_fixable": false
+    },
     "PDF.VERAPDF.UA1": {
       "title": "Validator evidence",
       "why_it_matters": "veraPDF checks the document against the machine-checkable parts of the PDF/UA accessibility standard. Its raw report is technical evidence for a specialist, not a verdict.",

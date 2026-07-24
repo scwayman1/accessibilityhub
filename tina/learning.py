@@ -25,6 +25,49 @@ CLAIM_BOUNDARY = (
     "practice milestones, not accessibility certifications."
 )
 
+POINTS_CLAIM_BOUNDARY = (
+    "Accessibility Points reward evidence-producing practice. They never "
+    "measure or imply the conformance of any document."
+)
+
+# PRD §12.2: points only for evidence-producing actions, never for clicking through.
+POINT_VALUES = {
+    "review": 10,          # per document review completed
+    "fix_skill": 25,       # per skill resolved and rechecked
+    "attestation": 15,     # per judgment decision recorded
+    "convert": 20,         # per HTML working copy created
+    "receipt": 15,         # per evidence receipt exported
+    "lesson": 10,          # per distinct lesson answered correctly
+    "sustained_skill": 50, # per skill currently sustained
+}
+
+MILESTONES = [
+    (0, "Getting Started"),
+    (50, "Barrier Spotter"),
+    (150, "Barrier Remover"),
+    (300, "Practice Builder"),
+    (600, "Access Champion"),
+]
+
+STREAK_BADGE_DAYS = 3
+
+BADGES = [
+    {"id": "evidence_builder", "label": "Evidence Builder",
+     "description": "Exported an evidence receipt for a review."},
+    {"id": "pdf_escape_artist", "label": "PDF Escape Artist",
+     "description": "Rebuilt a document as an editable HTML working copy."},
+    {"id": "meaningful_image_reviewer", "label": "Meaningful Image Reviewer",
+     "description": "Recorded a human judgment about image alternatives."},
+    {"id": "metadata_mender", "label": "Metadata Mender",
+     "description": "Resolved and rechecked a title or language barrier."},
+    {"id": "sustained_practice", "label": "Sustained Practice",
+     "description": "Kept a learned defect from recurring across later documents."},
+    {"id": "streak_keeper", "label": "Streak Keeper",
+     "description": f"Practiced on {STREAK_BADGE_DAYS} days in a row."},
+    {"id": "guided_learner", "label": "Guided Learner",
+     "description": "Completed a micro-lesson and got the judgment call right."},
+]
+
 # Skill map: PRD skill-map worlds, keyed by the deterministic rules that feed them.
 SKILLS: dict[str, dict[str, Any]] = {
     "titles_and_language": {
@@ -117,14 +160,32 @@ class LearningJourney:
             return
         self._record({"type": "attestation", "skill": skill, "rule_id": rule_id, "decision": decision.strip()[:2000]})
 
+    def record_activity(self, activity: str, document_sha256: str | None = None) -> None:
+        """Record a non-review practice activity (e.g. 'convert', 'receipt')."""
+        if activity not in {"convert", "receipt"}:
+            return
+        self._record({"type": activity, "document": _doc_id(document_sha256)})
+
+    def record_lesson(self, skill: str, lesson_id: str, passed: bool) -> None:
+        """Record a guided-practice result. Only a passed lesson is evidence."""
+        if skill not in SKILLS or not lesson_id or not passed:
+            return
+        self._record({"type": "lesson_passed", "skill": skill, "lesson_id": lesson_id})
+
     def _skill_mastery(self, skill: str) -> dict[str, Any]:
         introduced_at = None
+        practiced = False
         applied = False
         verified_index = None
+        lessons_passed: list[str] = []
         for index, event in enumerate(self.events):
             if event["type"] == "review" and skill in event.get("skills_with_findings", []):
                 if introduced_at is None:
                     introduced_at = event["recorded_at"]
+            if event["type"] == "lesson_passed" and event.get("skill") == skill:
+                practiced = True
+                if event["lesson_id"] not in lessons_passed:
+                    lessons_passed.append(event["lesson_id"])
             if event["type"] == "attestation" and event.get("skill") == skill:
                 applied = True
             if event["type"] == "fix_verified" and skill in event.get("skills", []):
@@ -134,6 +195,10 @@ class LearningJourney:
         state = "not_started"
         if introduced_at is not None:
             state = "introduced"
+        # A passed lesson is guided practice: it can start a skill or advance an
+        # introduced one, but it never outranks real-document evidence below.
+        if practiced:
+            state = "practiced"
         if applied:
             state = "applied"
         if verified_index is not None:
@@ -154,7 +219,9 @@ class LearningJourney:
                 elif event["document"] not in clean_documents:
                     clean_documents.append(event["document"])
             if regressed:
-                state = "introduced"
+                # The defect came back, so demonstrated mastery is not sustained —
+                # but guided practice already completed is not erased.
+                state = "practiced" if practiced else "introduced"
             elif len(clean_documents) >= SUSTAIN_DOCUMENTS:
                 state = "sustained"
 
@@ -162,6 +229,7 @@ class LearningJourney:
             "state": state,
             "introduced_at": introduced_at,
             "regressed": regressed,
+            "lessons_passed": lessons_passed,
             "clean_documents_since_verified": len(clean_documents),
             "clean_documents_needed_for_sustained": max(0, SUSTAIN_DOCUMENTS - len(clean_documents)),
         }
@@ -188,15 +256,82 @@ class LearningJourney:
             if len(documents) >= 2
         ]
 
+    def _streak(self) -> dict[str, Any]:
+        """Consecutive practice days, counted humanely: the streak survives until
+        a full day with no practice has actually passed (no punitive resets)."""
+        dates = sorted({event["recorded_at"][:10] for event in self.events if event.get("recorded_at")})
+        today = dt.datetime.now(dt.timezone.utc).date()
+        if not dates:
+            return {"days": 0, "active_today": False,
+                    "message": "Review one document to start a practice streak."}
+        day_set = {dt.date.fromisoformat(value) for value in dates}
+        anchor = today if today in day_set else today - dt.timedelta(days=1)
+        days = 0
+        while anchor in day_set:
+            days += 1
+            anchor -= dt.timedelta(days=1)
+        active_today = today in day_set
+        if days == 0:
+            message = "Welcome back — any practice today restarts your streak. No guilt, just documents."
+        elif active_today:
+            message = f"{days}-day practice streak. Nice, steady work."
+        else:
+            message = f"{days}-day streak — practice today to keep it going (grace period in effect)."
+        return {"days": days, "active_today": active_today, "message": message}
+
+    def _points(self, skills_state: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        counts = {
+            "review": sum(1 for e in self.events if e["type"] == "review"),
+            "fix_skill": sum(len(e.get("skills", [])) for e in self.events if e["type"] == "fix_verified"),
+            "attestation": sum(1 for e in self.events if e["type"] == "attestation"),
+            "convert": sum(1 for e in self.events if e["type"] == "convert"),
+            "receipt": sum(1 for e in self.events if e["type"] == "receipt"),
+            # Distinct lessons only: repeating one you already passed earns nothing.
+            "lesson": len({e["lesson_id"] for e in self.events if e["type"] == "lesson_passed"}),
+            "sustained_skill": sum(1 for state in skills_state.values() if state["state"] == "sustained"),
+        }
+        breakdown = {key: counts[key] * POINT_VALUES[key] for key in POINT_VALUES}
+        total = sum(breakdown.values())
+        current = next(name for threshold, name in reversed(MILESTONES) if total >= threshold)
+        upcoming = [(threshold, name) for threshold, name in MILESTONES if threshold > total]
+        milestone = {"current": current}
+        if upcoming:
+            threshold, name = upcoming[0]
+            milestone.update({"next": name, "points_to_next": threshold - total})
+        return {"total": total, "breakdown": breakdown, "milestone": milestone,
+                "claim_boundary": POINTS_CLAIM_BOUNDARY}
+
+    def _badges(self, skills_state: dict[str, dict[str, Any]], streak_days: int) -> list[dict[str, Any]]:
+        earned = {
+            "evidence_builder": any(e["type"] == "receipt" for e in self.events),
+            "pdf_escape_artist": any(e["type"] == "convert" for e in self.events),
+            "meaningful_image_reviewer": any(
+                e["type"] == "attestation" and e.get("skill") == "images_and_meaning" for e in self.events
+            ),
+            "metadata_mender": any(
+                e["type"] == "fix_verified" and "titles_and_language" in e.get("skills", [])
+                for e in self.events
+            ),
+            "sustained_practice": any(state["state"] == "sustained" for state in skills_state.values()),
+            "streak_keeper": streak_days >= STREAK_BADGE_DAYS,
+            "guided_learner": any(e["type"] == "lesson_passed" for e in self.events),
+        }
+        return [{**badge, "earned": earned[badge["id"]]} for badge in BADGES]
+
     def journey(self) -> dict[str, Any]:
         reviewed_documents = {event["document"] for event in self.events if event["type"] == "review"}
+        skills_state = {
+            skill: {"label": spec["label"], "world": spec["world"], **self._skill_mastery(skill)}
+            for skill, spec in SKILLS.items()
+        }
+        streak = self._streak()
         return {
             "contract_version": CONTRACT_VERSION,
             "claim_boundary": CLAIM_BOUNDARY,
             "documents_reviewed": len(reviewed_documents),
-            "skills": {
-                skill: {"label": spec["label"], "world": spec["world"], **self._skill_mastery(skill)}
-                for skill, spec in SKILLS.items()
-            },
+            "skills": skills_state,
             "repeat_defects": self._repeat_defects(),
+            "points": self._points(skills_state),
+            "streak": streak,
+            "badges": self._badges(skills_state, streak["days"]),
         }

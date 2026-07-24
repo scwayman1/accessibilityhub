@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "claim_boundary": "Lessons build practice. Completing one records that you demonstrated understanding; it never certifies a document or a person.",
+  "voice_note": "Direct, respectful, encouraging, occasionally playful, never patronizing.",
+  "lessons": [
+    {
+      "lesson_id": "titles-and-language-101",
+      "skill": "titles_and_language",
+      "title": "What a document calls itself",
+      "minutes": 3,
+      "steps": [
+        {"kind": "encounter", "body": "You export a syllabus from Word. It opens fine, looks right, and the filename is final_v3 (2).pdf."},
+        {"kind": "experience", "body": "A student using a screen reader opens it. Before any content, the software announces the window: 'final underscore v three, open paren two close paren, dot p d f.' They now have to read into the document just to learn what it is. If the language is also unset, the voice may pronounce English with the wrong rules — or read Spanish content as if it were English."},
+        {"kind": "explain", "body": "Two small properties carry this: the document title (what it announces itself as) and the primary language (which pronunciation rules to use). Both live in the file's metadata, not in the visible text — so a document can look perfect and still be missing them."},
+        {"kind": "decide", "prompt": "A colleague says: 'The title is right there on page one in 24-point bold. That counts as the title.' What's the accurate response?", "options": ["Visible text on page one is not the document title property — assistive technology reads the metadata, so it still needs to be set", "They're right; large bold text is detected as the title automatically", "It only matters if the document will be posted publicly"], "correct_index": 0, "rationale": "Visual formatting and document properties are separate. A heading on page one is text; the title property is metadata. Screen readers announce the metadata, which is why a beautifully formatted document can still announce itself as 'final_v3 (2)'."},
+        {"kind": "verify", "body": "This is one of the few things a machine can fix with certainty, because you supply the answer. In the workbench, entering a title and language applies them to a copy and immediately re-checks it — you see the findings resolve rather than taking anyone's word for it."},
+        {"kind": "transfer", "body": "Next export, set both in the source application first. In Word: File → Info → Properties for the title, and Review → Language for the language. Then the exported PDF starts clean and this finding never appears."}
+      ]
+    },
+    {
+      "lesson_id": "structure-101",
+      "skill": "structure_and_reading_order",
+      "title": "Headings that are actually headings",
+      "minutes": 5,
+      "steps": [
+        {"kind": "encounter", "body": "A handout has clear sections. Each one starts with text made big and bold by hand — no styles used, just formatting."},
+        {"kind": "experience", "body": "Screen reader users navigate long documents by jumping heading to heading, the way you'd skim with your eyes. In this handout there are no headings to jump to — the whole thing is one undifferentiated stream. To find 'Week 3 Assignments,' they must listen linearly from the top. What takes you four seconds of scanning takes them minutes."},
+        {"kind": "explain", "body": "Tags are the document's structure: this is a heading, this is a list, this is a table, read them in this order. Visual formatting is not structure. Big-and-bold looks like a heading to an eye and reads as a plain sentence to assistive technology."},
+        {"kind": "decide", "prompt": "The workbench reports 'Marked=False; structure_tree=False' on a PDF. What is the honest next step?", "options": ["Route it to human review and fix the structure in the source document, then re-export", "Have the tool auto-generate tags so the finding disappears", "Ignore it — untagged PDFs are usually fine if they look organized"], "correct_index": 0, "rationale": "Automated tag guessing produces documents that pass a checker while still misleading real readers — a differently inaccessible file with a green checkmark. Structure is meaning, and meaning is a human call. Fixing it at the source is both more honest and less work than repairing tags after export."},
+        {"kind": "verify", "body": "This workbench will not pretend to fix this one. It reports what it found, routes it to you, and if rebuilding is the better path it offers an editable HTML draft where structure is something you can actually set."},
+        {"kind": "transfer", "body": "In your next document, use real Heading 1 / Heading 2 styles instead of manual formatting, and export with 'tagged PDF' or 'document structure' enabled. The visual result is identical. The experience is not."}
+      ]
+    },
+    {
+      "lesson_id": "images-101",
+      "skill": "images_and_meaning",
+      "title": "Describing what an image is for",
+      "minutes": 5,
+      "steps": [
+        {"kind": "encounter", "body": "A lecture handout has three images: the college logo in the header, a photo of a lab bench, and a chart showing enrollment trends that the text refers to as 'the pattern above.'"},
+        {"kind": "experience", "body": "With no descriptions, a screen reader user hears 'image, image, image' — or nothing at all. The logo they don't need. The photo may be atmosphere. But the chart carries the argument: the surrounding text says 'as you can see,' and they cannot."},
+        {"kind": "explain", "body": "The question is never 'what does this picture show?' It is 'why is this picture here?' Decorative images should be marked decorative so they're skipped silently. Informative images need a description of their point. A chart that carries data usually needs its finding stated in the text, not just a label."},
+        {"kind": "decide", "prompt": "Which alt text serves the enrollment chart best?", "options": ["'Enrollment rose from 400 to 1,200 between 2019 and 2024, with the sharpest jump after 2022'", "'Chart'", "'Image of a bar chart with blue bars and an x-axis showing years and a y-axis showing enrollment numbers'"], "correct_index": 0, "rationale": "The first states what the chart is for — the finding the reader needs. 'Chart' says nothing. The third describes the furniture in detail and still never says what happened. Describe the point, not the pixels."},
+        {"kind": "verify", "body": "No tool can make this call for you. The workbench counts image objects and routes them to your judgment; when you record your decision, it's stored as user-attested evidence — attributed to a person, because a person made it."},
+        {"kind": "transfer", "body": "In your next document, write alt text as you insert each image, while you still remember why you chose it. Mark decorative ones decorative. Future-you will not remember."}
+      ]
+    },
+    {
+      "lesson_id": "links-101",
+      "skill": "links_and_navigation",
+      "title": "Links that say where they go",
+      "minutes": 3,
+      "steps": [
+        {"kind": "encounter", "body": "An assignment sheet reads: 'The reading is here. The rubric is here. Submit here.' Each 'here' is a link."},
+        {"kind": "experience", "body": "Screen reader users often pull up a list of just the links, the way you'd scan a page for the blue text. This document's list reads: 'here, here, here.' Three destinations, zero information. The same list with raw URLs is no better — 'h t t p colon slash slash tinyurl dot com slash 4 x 7 k 9 q'."},
+        {"kind": "explain", "body": "Link text should make sense read on its own, out of context, because that is exactly how it often gets read."},
+        {"kind": "decide", "prompt": "Which rewrite fixes the assignment sheet?", "options": ["'Week 3 reading: chapter 4', 'Grading rubric', and 'Submit your assignment in Canvas'", "'Click here for the reading', 'click here for the rubric', 'click here to submit'", "Leave the wording and add the full URL in parentheses after each link"], "correct_index": 0, "rationale": "Each link now describes its own destination and stands alone in a link list. 'Click here' just relocates the problem, and appending raw URLs adds noise that gets read aloud character by character."},
+        {"kind": "verify", "body": "The workbench can count link annotations but cannot judge whether their text is meaningful — that requires reading them in context. It hands you the list and records the decision you make."},
+        {"kind": "transfer", "body": "Next time you write a link, ask: if someone read only these words, would they know where this goes? If not, rewrite it before you publish."}
+      ]
+    },
+    {
+      "lesson_id": "scans-101",
+      "skill": "scans_and_text_access",
+      "title": "When a page is a picture of words",
+      "minutes": 4,
+      "steps": [
+        {"kind": "encounter", "body": "A chapter excerpt was photocopied years ago and scanned to PDF. It opens, it prints, it looks completely normal."},
+        {"kind": "experience", "body": "Try to search it for a term and nothing is found. Try to copy a quote and nothing selects. A screen reader reaches the page and announces an image — because that's all it is. The words are visible to eyes and absent to software."},
+        {"kind": "explain", "body": "Scanned pages have no text layer. OCR can create one by recognizing shapes as characters, but OCR guesses: it confuses similar glyphs, mangles multi-column layouts, and produces confident nonsense on poor scans. It's a starting point, never a finish line."},
+        {"kind": "decide", "prompt": "The workbench reports that 12 of 12 pages have no extractable text. What's the best first move?", "options": ["Look for the original digital source first; if only the scan exists, run OCR and then review the output", "Run OCR and post the result — recognition is reliable enough now", "Post the scan and offer an alternative format only if a student asks"], "correct_index": 0, "rationale": "A born-digital original beats any OCR result, and publishers or colleagues often have one. When only the scan exists, OCR is the right tool — followed by human review, because unreviewed OCR quietly introduces errors into course material. Waiting for a student to ask puts the burden on the person already facing the barrier."},
+        {"kind": "verify", "body": "The workbench flags pages with no extractable text but deliberately will not tell you the document 'failed.' It tells you what it observed and what decision that requires."},
+        {"kind": "transfer", "body": "When you receive scanned material, ask the source for a digital original before you distribute it. It's a thirty-second email that saves an OCR cleanup."}
+      ]
+    },
+    {
+      "lesson_id": "integrity-101",
+      "skill": "document_integrity",
+      "title": "Files that fight back",
+      "minutes": 3,
+      "steps": [
+        {"kind": "encounter", "body": "A PDF arrives from a colleague. It opens in your viewer, but the workbench reports a structural failure — or that the file is encrypted."},
+        {"kind": "experience", "body": "Damaged and restricted files fail unevenly. One viewer renders them; another shows blank pages. Assistive technology is usually the first thing to break, so the student using a screen reader hits the wall while everyone else sees a working document — and reports a problem no one can reproduce."},
+        {"kind": "explain", "body": "Password protection and permission restrictions can also block assistive technology outright. Some restrictions have an 'enable accessibility' permission; when it's off, the document is deliberately unreadable to the tools that need it most."},
+        {"kind": "decide", "prompt": "A required reading is encrypted and the workbench cannot inspect it. What's the responsible step?", "options": ["Request an unencrypted or accessibility-permitted copy from the owner before distributing it", "Distribute it — it opens for you, so it will probably open for everyone", "Strip the protection yourself so the checker can run"], "correct_index": 0, "rationale": "'It works on my machine' is exactly the failure mode here. Going back to the owner is both the accessible answer and the lawful one — removing protection you weren't granted isn't yours to do."},
+        {"kind": "verify", "body": "When intake is blocked, the workbench stops and says so rather than guessing. A blocked review is information, not a failure to work around."},
+        {"kind": "transfer", "body": "When you apply protection to your own documents, verify that accessibility permissions stay enabled — or skip the protection entirely."}
+      ]
+    }
+  ]
+}

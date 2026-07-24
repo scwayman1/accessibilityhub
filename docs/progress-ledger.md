@@ -7,13 +7,86 @@
 > its tests — the same evidence-before-claims discipline the product itself
 > enforces. Last updated: 2026-07-20.
 
+## Post-merge review fixes (2026-07-20)
+
+Three correctness findings from an automated review of the merged Learning-OS
+PR, all verified against the code and fixed as a follow-up (`tests/test_review_hardening.py`):
+
+- **Truthful evidence when the validator is absent.** When veraPDF cannot run
+  (Docker or the pinned image missing), `check_pdf.py` no longer emits the
+  `PDF.VERAPDF.UA1` advisory claiming "a report was generated." It emits a
+  `PDF.VERAPDF.UNAVAILABLE` `tool_failure_or_unsupported` finding instead, with
+  its own teaching card.
+- **Graceful degradation for encrypted PDFs without qpdf.** `analyze()` now
+  honors pypdf's own `is_encrypted` verdict before touching pages, so a
+  password-protected file returns a blocking-intake report instead of raising
+  when qpdf is unavailable.
+- **No cross-document evidence leak.** The workbench resets all
+  document-scoped state (`lastReport`, `lastFix`, `attestations`, fixed-copy
+  bytes) and returns to the pre-review layout when a new PDF is chosen, so an
+  exported receipt can never describe a previous document.
+
+## Engineering loop — gamification + BYOK intelligence (2026-07-22)
+
+- **Motivational design shipped (PRD §12):** Accessibility Points awarded only
+  for evidence-producing actions (`tina/learning.py` `POINT_VALUES`), humane
+  practice streaks with a grace day and no punitive language, six
+  evidence-based badges, and named milestones — all derived deterministically
+  from the existing event log, with an explicit "practice, not compliance"
+  claim boundary. Workbench HUD shows points, streak, milestone progress,
+  "+N points earned" celebrations, and badge chips.
+  Tests: `tests/test_gamification.py`.
+- **Coastline College Foundation interstitials:** authored, deterministic,
+  disable-able ad breaks (`foundation_ads.json`) shown during scans and after
+  verified fixes, with an explicit sponsor disclosure line. Governance-scanned
+  like every other surface.
+- **BYOK intelligence layer shipped (AI architecture Phase 1, Modes 2–3):**
+  `tina/intelligence.py` — provider-neutral gateway (OpenAI-compatible:
+  Ollama/vLLM/OpenRouter/OpenAI, plus Anthropic), capability handshake, keys
+  held in process memory only and never present in status output, per-request
+  egress manifest with explicit consent, evidence-only payloads inside an
+  untrusted-data boundary, schema-validated output with prohibited-claim
+  rejection, and fail-closed fallback to the authored teaching card. One
+  bounded task: `explain_finding` (Review Interpreter). Endpoints
+  `/api/ai/configure`, `/api/ai/status`, `/api/ai/manifest`,
+  `/api/ai/explain`. Tests: `tests/test_intelligence.py` (fake loopback
+  model endpoint; consent, key-leak, prohibited-claim, injection-boundary,
+  fail-closed cases). The deterministic engine remains the sole authority
+  for findings, mutations, rechecks, and receipts.
+
+## Engineering loop — micro-lessons and the practiced state (2026-07-24)
+
+- **Authored micro-lessons shipped (PRD §11, next-loop Increment 1):**
+  `lesson_content.json` carries one lesson per skill in the skill map, each
+  following the full encounter → experience → explain → decide → verify →
+  transfer sequence. `tina/lessons.py` loads, validates (unknown skill,
+  duplicate id, out-of-range answer, missing rationale, exactly one decide
+  step), and scores by exact match — no generation, no adaptive difficulty.
+  The browser catalog withholds correct answers until scoring.
+- **The `practiced` mastery state is now reachable.** A passed lesson advances
+  a skill from `not_started`/`introduced` to `practiced` and never outranks
+  real-document evidence (`applied`/`verified`/`sustained`). Regression after a
+  recurrence falls back to `practiced` rather than erasing completed practice.
+  Distinct lessons earn points once; a Guided Learner badge marks the first
+  correct judgment call. Endpoints `GET /api/lessons`,
+  `POST /api/lesson-result`; the finding detail panel offers "Practice this
+  skill" inline. Tests: `tests/test_lessons.py` (including a coverage test that
+  fails CI if any skill ships without a lesson).
+- **Post-review hardening of the AI boundary (P1 from automated review):** the
+  prohibited-claim validator caught only exact phrases, so a model could assert
+  "This document passes WCAG 2.2" or "satisfies PDF/UA" and have it displayed.
+  `tina/intelligence.py` now detects the *shape* of a conformance claim — an
+  assertion verb pointed at a standard — alongside the phrase list, verified
+  against eight claim phrasings with no false positives on legitimate
+  explanations. Tests: `tests/test_intelligence.py`.
+
 ## Phase status at a glance
 
 | PRD phase | Status |
 |---|---|
 | 1. Honest Local Review | **Shipped** (spike scope: PDF only) |
 | 2. Fix and Verify | **Shipped** (metadata repairs; evidence receipts; judgment attestations) |
-| 3. Learning Journey | **Tracer bullet shipped** (evidence-based mastery, repeat-defect tracking; lessons/challenges not yet built) |
+| 3. Learning Journey | **Substantially shipped** (evidence-based mastery incl. practiced via authored micro-lessons, points/streaks/badges, repeat-defect tracking; challenges and portfolio not yet built) |
 | 4. HTML Escape Hatch | **Shipped** (extraction draft + offline editor; AI-assisted reconstruction not built) |
 | 5. Institutional Transformation | **Not started** (design only: `tina-private-beta-intake.md`) |
 | AI intelligence layer | **Not started by design** (architecture doc governs any future work; Mode 1 "Deterministic Only" is the shipped product) |

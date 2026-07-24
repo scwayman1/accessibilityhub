@@ -129,6 +129,30 @@ The workbench closes the loop on the findings it can deterministically resolve:
   combined into an overall pass. A CI governance test bans prohibited
   outcome language across all product surfaces.
 
+### Improve — points, streaks, badges, and optional intelligence
+
+- The learning journey now awards **Accessibility Points** for
+  evidence-producing actions only (reviews, verified fixes, judgments, HTML
+  drafts, receipts, sustained skills), with humane streaks, evidence-based
+  badges, and milestones — practice motivation, never a compliance score.
+  Corny-but-honest **Coastline College Foundation** interstitials (authored in
+  `foundation_ads.json`, clearly disclosed, disable-able) appear during scans
+  and after wins.
+- **Micro-lessons** turn each finding into three-to-five minutes of guided
+  practice (`lesson_content.json`, `GET /api/lessons`): what a student
+  experiences, why it happens, one judgment call to make, and how to prevent it
+  next time. Getting the call right advances that skill to **practiced** — the
+  rung between "the defect appeared" and "you fixed it in a real document." A
+  wrong answer explains the distinction and lets you try again; it never
+  punishes and never advances mastery.
+- An optional **bring-your-own-model intelligence layer**
+  (`tina/intelligence.py`) can explain findings in plain language: connect any
+  OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, OpenAI) or Anthropic.
+  Keys stay in process memory only; every request shows an egress manifest and
+  requires explicit consent; only finding evidence is sent — never the
+  document; model output is schema-validated and rejected if it makes
+  conformance claims. The product works fully without AI.
+
 ### HTML working copy — convert the asset and make the improvements
 
 When repairing the PDF is the wrong medium, the workbench derives an editable
