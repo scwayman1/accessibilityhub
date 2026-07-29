@@ -1,4 +1,5 @@
 import io
+import shutil
 import tempfile
 import time
 import unittest
@@ -152,6 +153,21 @@ class StagingServiceTests(unittest.TestCase):
         provenance = self.repository.remediations("coastline-staging", child_id)[0]["provenance"]
         self.assertEqual(provenance["actions"][0]["provenance"], "user_confirmed")
         self.assertTrue(provenance["verification"]["text_preserved"])
+
+    @unittest.skipUnless(shutil.which("tesseract"), "tesseract binary is not installed")
+    def test_synthetic_scan_uses_existing_ocr_remediator_and_rechecks_the_text_layer(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST", {"fixture": "scan"})
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        before = self.wait_for_result(source_id)["result"]
+        self.assertIn("PDF.TEXT_LAYER", {item["rule_id"] for item in before["signals"]})
+        status, headers, _ = self.request(f"/documents/{source_id}/remediate/ocr", "POST", {"confirmed": "yes"})
+        self.assertTrue(status.startswith("303"))
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        after = self.wait_for_result(child_id)["result"]
+        self.assertNotIn("PDF.TEXT_LAYER", {item["rule_id"] for item in after["signals"] if item["lane"] != "not_assessed"})
+        provenance = self.repository.remediations("coastline-staging", child_id)[0]["provenance"]
+        self.assertEqual(provenance["actions"][0]["provenance"], "ocr_generated")
 
 
 if __name__ == "__main__":

@@ -17,8 +17,9 @@ The service calls the existing remediation implementations rather than duplicati
 
 - `tina.remedy.MetadataRemediation` for title and primary-language copies;
 - `tina.structure.StructureRemediation` for human-confirmed roles and reading order, including its page/text preservation verification.
+- `tina.ocr.OcrRemediation` for the bundled scanned handout, after an educator confirms they will review the generated text layer against the page image.
 
-The established local Fix Lab still owns the current semantic-description and OCR user interactions. The service does not expose a general upload, OCR, or AI route in this staging slice; it keeps that surface closed until its worker and storage controls are independently deployed.
+The established local Fix Lab still owns the current semantic-description interaction. The service does not expose a general upload or AI route in this staging slice; it keeps that surface closed until its worker and storage controls are independently deployed.
 
 ## Protected boundary
 

@@ -1,6 +1,10 @@
 """Generate the only document this staging slice is permitted to process."""
 from __future__ import annotations
 
+import io
+
+from PIL import Image, ImageDraw, ImageFont
+
 
 def synthetic_handout_pdf() -> bytes:
     """Return a deterministic, rights-cleared course handout with two repairable metadata gaps."""
@@ -39,3 +43,19 @@ def synthetic_handout_pdf() -> bytes:
         output.extend(f"{offset:010d} 00000 n \n".encode())
     output.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return bytes(output)
+
+
+def synthetic_scan_pdf() -> bytes:
+    """Return a rights-cleared scan-shaped page with no text layer for OCR recheck."""
+    image = Image.new("RGB", (1275, 1650), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=48)
+    for index, line in enumerate((
+        "Week 3 field notes",
+        "Synthetic scanned handout for Accessibility Hub staging.",
+        "Review the generated text layer against this page image.",
+    )):
+        draw.text((120, 200 + index * 120), line, fill="black", font=font)
+    output = io.BytesIO()
+    image.save(output, "PDF", resolution=150.0)
+    return output.getvalue()
