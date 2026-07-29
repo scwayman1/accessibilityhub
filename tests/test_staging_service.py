@@ -78,6 +78,26 @@ class StagingServiceTests(unittest.TestCase):
         self.assertTrue(payload.startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertIn(b"coastline-college-logo-white.png", self.request("/login")[2])
 
+    def test_private_workspace_uses_labeled_workflow_steps_and_finding_chips(self):
+        self.login()
+        status, _, workspace = self.request("/app")
+        self.assertTrue(status.startswith("200"))
+        for label in (b"Add material", b"Review", b"Improve", b"Check again"):
+            self.assertIn(label, workspace)
+        self.assertIn(b"panel rail", workspace)
+        self.assertIn(b":focus-visible", workspace)
+        self.assertIn(b"@media(max-width:800px)", workspace)
+        self.assertIn(b".workspace { grid-template-columns:1fr }", workspace)
+
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(document_id)
+        status, _, page = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b'class="chip"', page)
+        self.assertIn(b"Needs attention", page)
+        self.assertIn(b"signal-icon", page)
+
     def test_private_synthetic_document_to_recheck_flow(self):
         self.login()
         status, headers, _ = self.request("/documents/synthetic", "POST")
@@ -89,7 +109,7 @@ class StagingServiceTests(unittest.TestCase):
         self.assertIn("PDF.METADATA.TITLE", {item["rule_id"] for item in before["signals"]})
         status, _, page = self.request(f"/documents/{document_id}")
         self.assertTrue(status.startswith("200"))
-        self.assertIn(b"needs attention", page)
+        self.assertIn(b"Needs attention", page)
         self.assertIn(b"Fix Lab", page)
         self.assertIn(b"Update title and language", page)
 
