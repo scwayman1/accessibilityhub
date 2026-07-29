@@ -312,7 +312,7 @@ class FakeRunnerTests(unittest.TestCase):
     def test_module_and_report_strings_carry_no_conformance_claims(self):
         forbidden = ("fully compliant", "guaranteed accessible", "passed accessibility",
                      "certified accessible", "fully accessible")
-        source = Path("/home/user/accessibilityhub/tina/ocr.py").read_text(encoding="utf-8").lower()
+        source = (Path(__file__).resolve().parent.parent / "tina" / "ocr.py").read_text(encoding="utf-8").lower()
         for phrase in forbidden:
             self.assertNotIn(phrase, source)
         runner = lambda image_bytes: fake_tsv([(120, 200, 400, 50, 96.0, "Hello")])
