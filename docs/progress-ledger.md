@@ -80,6 +80,41 @@ PR, all verified against the code and fixed as a follow-up (`tests/test_review_h
   against eight claim phrasings with no false positives on legitimate
   explanations. Tests: `tests/test_intelligence.py`.
 
+## Rescue loop — the Fix Lab: remediation depth (2026-07-24)
+
+Product-owner review found the core miss: the PRD's Fix Lab (§14.4) was mostly
+unbuilt — the product found and taught but repaired only two metadata fields.
+This loop closes the remediation gap:
+
+- **Fixable defects, itemized (checker):** `PDF.LINKS.NAME` — links lacking an
+  accessible description (/Contents), per-link detail with URI and page; and
+  `PDF.IMAGES.ALT_MISSING` — tagged figure elements lacking /Alt, per-figure
+  detail. Fully-named links and fully-described figures become verified
+  strengths on re-check, so these fixes are *provable*.
+- **Semantic write-back (`SemanticRemediation`, `document.remediate.semantics`):**
+  attaches human-authored link descriptions to any PDF and figure alt text to
+  tagged PDFs, with before/after hashes and `user_authored` provenance. On
+  untagged PDFs the alt path declines honestly and routes to the HTML rebuild
+  — refusal over faked success. `POST /api/fix-semantics` runs review → apply
+  → re-review; `POST /api/images` shows the human what they are describing.
+- **AI that helps fix (architecture §19–20):** `draft_alt_text` sends one
+  image + nearby text (consent-gated, vision) and returns a labeled draft the
+  human approves or rewrites — the model can never mark an image decorative;
+  `propose_structure` sends extracted text blocks (manifest explicitly warns
+  document text leaves) and returns allowlisted roles (h1/h2/h3/p/li) by block
+  index only — the model never rewrites text, phantom indexes and off-list
+  roles are rejected, and the deterministic serializer builds the draft with
+  each proposal marked `data-proposed="model"` for human confirmation.
+  `POST /api/convert-structured` applies confirmed/proposed roles, including
+  list grouping.
+- **Fix Lab UI:** per-link and per-figure panels with image previews, AI draft
+  buttons with inline egress consent, apply-and-recheck; an outcome tracker
+  ("Updated PDF / Accessible HTML / Evidence receipt") so every session ends
+  with the accessible assets, not a report.
+
+Tests: `tests/test_fixlab.py` (13) + drafting-task tests in
+`tests/test_intelligence.py` (6); 124 total. Browser-verified end to end.
+
 ## Phase status at a glance
 
 | PRD phase | Status |

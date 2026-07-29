@@ -107,6 +107,24 @@ The workbench closes the loop on the findings it can deterministically resolve:
   routed to human review; the fix banner states explicitly that resolving
   technical findings is not a conformance result.
 
+### Fix Lab — the asset comes out more accessible
+
+- **Link names**: unnamed links are an itemized, fixable defect. You describe
+  each destination; the tool writes it onto the link annotation in a copy and
+  the re-check proves it (`PDF.LINKS.NAME` → verified strength).
+- **Figure alt text**: on tagged PDFs, figures without `/Alt` are itemized and
+  fixable — you see each image, write its description (or mark it decorative),
+  and the fix is applied and re-checked. On untagged PDFs the tool declines
+  honestly and routes you to the HTML rebuild, which carries your descriptions.
+- **AI drafts, human decisions**: with a model connected, "Draft with AI"
+  sends one image (after you approve the egress manifest) and returns a
+  labeled draft you edit or replace; "AI-structured HTML draft" proposes
+  heading/list roles for the extracted text — roles only, from an allowlist,
+  marked in the draft for your confirmation. The model never applies anything
+  and never decides what is decorative.
+- Every session ends with the outputs tracked on screen: **updated PDF,
+  accessible HTML, evidence receipt.**
+
 ### Prove and improve — receipts, judgments, and the learning journey
 
 - Every review can export an **evidence receipt** (`POST /api/receipt`,

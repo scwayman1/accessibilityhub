@@ -19,6 +19,7 @@ from pypdf.generic import BooleanObject, DictionaryObject, NameObject, TextStrin
 from tina.kernel import ToolGateway, ToolManifest
 
 REMEDIATE_METADATA_PERMISSION = "document.remediate.metadata"
+REMEDIATE_SEMANTICS_PERMISSION = "document.remediate.semantics"
 MAX_TITLE_CHARS = 512
 LANGUAGE_TAG_PATTERN = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 
@@ -88,6 +89,151 @@ def _set_document_metadata(input_data: dict[str, Any]) -> dict[str, Any]:
         "remediated_bytes": len(remediated),
         "remediated_payload": remediated,
     }
+
+
+def _apply_accessible_names(input_data: dict[str, Any]) -> dict[str, Any]:
+    """Class-2 user-supplied semantic repairs: link descriptions and figure alt text.
+
+    Every string applied here was written by a human. The tool attaches it; it
+    never authors, infers, or improves it. Alt text requires a tag structure —
+    on untagged PDFs the tool declines honestly and routes to the HTML rebuild.
+    """
+    payload: bytes = input_data["payload"]
+    link_names: dict[str, str] = {str(k): str(v) for k, v in (input_data.get("link_names") or {}).items() if str(v).strip()}
+    alt_texts: dict[str, dict[str, Any]] = {str(k): v for k, v in (input_data.get("alt_texts") or {}).items()}
+    if not link_names and not alt_texts:
+        raise RemediationError("No link description or alternative text was supplied.")
+
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception as error:
+        raise RemediationError(f"The PDF could not be parsed for remediation: {type(error).__name__}") from error
+    if reader.is_encrypted:
+        raise RemediationError("Encrypted PDFs are not remediated; request an unencrypted source copy.")
+
+    writer = PdfWriter(clone_from=reader)
+    actions: list[dict[str, Any]] = []
+
+    if link_names:
+        link_index = -1
+        applied = 0
+        for page in writer.pages:
+            for raw in page.get("/Annots", []) or []:
+                annotation = raw.get_object()
+                if not annotation or annotation.get("/Subtype") != "/Link":
+                    continue
+                link_index += 1
+                name = link_names.get(str(link_index))
+                if name:
+                    annotation[NameObject("/Contents")] = TextStringObject(name.strip()[:500])
+                    applied += 1
+        if applied != len(link_names):
+            raise RemediationError(
+                f"Only {applied} of {len(link_names)} link indexes exist in this document; re-run the review and try again."
+            )
+        actions.append({
+            "rule_id": "PDF.LINKS.NAME",
+            "action": "apply_link_descriptions",
+            "count": applied,
+            "provenance": "user_authored",
+            "detail": "Set /Contents (accessible description) on each named link annotation.",
+        })
+
+    if alt_texts:
+        from check_pdf import indirect, iter_figures  # deterministic walker shared with the checker
+
+        struct_root = indirect((indirect(writer.root_object) or {}).get("/StructTreeRoot"))
+        if struct_root is None:
+            raise RemediationError(
+                "This PDF has no tag structure, so alternative text cannot be attached to it. "
+                "Rebuild it as an accessible HTML working copy instead — that path carries your descriptions."
+            )
+        figures = iter_figures(struct_root)
+        applied = 0
+        for key, decision in alt_texts.items():
+            try:
+                figure = figures[int(key)]
+            except (ValueError, IndexError):
+                raise RemediationError(f"Figure index {key} does not exist in this document's structure tree.")
+            if decision.get("decorative"):
+                value = ""
+            else:
+                value = str(decision.get("alt", "")).strip()[:1000]
+                if not value:
+                    raise RemediationError("Each figure needs a description or an explicit decorative decision.")
+            figure["element"][NameObject("/Alt")] = TextStringObject(value)
+            applied += 1
+        actions.append({
+            "rule_id": "PDF.IMAGES.ALT_MISSING",
+            "action": "apply_figure_alt_text",
+            "count": applied,
+            "provenance": "user_authored",
+            "detail": "Set /Alt on each decided figure element (empty /Alt marks a decorative image).",
+        })
+
+    output = io.BytesIO()
+    writer.write(output)
+    remediated = output.getvalue()
+    return {
+        "actions": actions,
+        "source_sha256": f"sha256:{sha256(payload).hexdigest()}",
+        "remediated_sha256": f"sha256:{sha256(remediated).hexdigest()}",
+        "source_bytes": len(payload),
+        "remediated_bytes": len(remediated),
+        "remediated_payload": remediated,
+    }
+
+
+class SemanticRemediation:
+    """Applies human-authored link descriptions and figure alt text to a copy."""
+
+    CONTRACT_VERSION = "tina-remediation-report/v1"
+    CLAIM_BOUNDARY = (
+        "These fixes attach human-written descriptions to a copy of the document. "
+        "They resolve specific technical findings only; whether each description "
+        "is meaningful remains a human judgment, and no conformance is implied."
+    )
+
+    def __init__(self, gateway: ToolGateway) -> None:
+        self.gateway = gateway
+
+    @classmethod
+    def with_builtin_tools(cls) -> "SemanticRemediation":
+        gateway = ToolGateway()
+        gateway.register(
+            ToolManifest(
+                name="apply_accessible_names",
+                version="1.0.0",
+                purpose="Attach user-authored link descriptions and figure alt text to a PDF copy.",
+                deterministic=True,
+                mutates_document=True,
+                permissions=(REMEDIATE_SEMANTICS_PERMISSION,),
+                timeout_ms=30_000,
+            ),
+            _apply_accessible_names,
+        )
+        return cls(gateway)
+
+    def apply(self, filename: str, payload: bytes,
+              link_names: dict[str, str] | None = None,
+              alt_texts: dict[str, dict[str, Any]] | None = None) -> tuple[bytes, dict[str, Any]]:
+        execution = self.gateway.execute(
+            "apply_accessible_names",
+            {"payload": payload, "link_names": link_names, "alt_texts": alt_texts},
+            {REMEDIATE_SEMANTICS_PERMISSION},
+        )
+        remediated: bytes = execution["output"].pop("remediated_payload")
+        report = {
+            "contract_version": self.CONTRACT_VERSION,
+            "claim_boundary": self.CLAIM_BOUNDARY,
+            "filename": filename,
+            "tool": execution["tool"],
+            "tool_version": execution["tool_version"],
+            "deterministic": execution["deterministic"],
+            "mutates_document": execution["mutates_document"],
+            **execution["output"],
+        }
+        return remediated, report
 
 
 class MetadataRemediation:

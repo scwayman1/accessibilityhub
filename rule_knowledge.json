@@ -34,12 +34,28 @@
       "fix_at_source": "Find the original digital document if it exists. If only a scan exists, run recognized OCR and then review the result — OCR output still needs a human check.",
       "auto_fixable": false
     },
+    "PDF.IMAGES.ALT_MISSING": {
+      "title": "Figures missing alt text",
+      "why_it_matters": "These images are tagged as figures — the structure is there — but no description was ever attached. A screen reader announces each one as an unnamed image and moves on, leaving the reader to guess what they missed.",
+      "who_it_affects": "Blind and low-vision students most directly; the description you write is the entire image for them.",
+      "fix_at_source": "You write the description (or mark the image decorative); the tool attaches it to the figure element in a copy and re-checks. In the source application, add alt text as you insert each image.",
+      "auto_fixable": false,
+      "fix_lab": "images"
+    },
     "PDF.IMAGES.ALTERNATIVES": {
       "title": "Image descriptions",
       "why_it_matters": "An image with no text alternative is silent for a screen reader user. A short description of why the image is there — not what every pixel shows — carries its meaning to everyone.",
       "who_it_affects": "Blind and low-vision students, and anyone on a slow connection where images fail to load.",
       "fix_at_source": "Add alt text to each meaningful image in the source document, and mark purely decorative images as decorative, then re-export.",
       "auto_fixable": false
+    },
+    "PDF.LINKS.NAME": {
+      "title": "Links without a name",
+      "why_it_matters": "A link with no accessible description is announced by its raw URL — or as just 'link'. Screen reader users navigating by link list get a list of destinations with no information in it.",
+      "who_it_affects": "Screen reader users navigating by link list, and anyone whose software reads links aloud.",
+      "fix_at_source": "You describe each link's destination; the tool writes the description onto the link annotation in a copy and re-checks. In the source, write meaningful link text before exporting.",
+      "auto_fixable": false,
+      "fix_lab": "links"
     },
     "PDF.LINKS.PURPOSE": {
       "title": "Link purpose",
