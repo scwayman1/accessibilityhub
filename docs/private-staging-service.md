@@ -2,6 +2,12 @@
 
 `service/` is the first deployable control plane for Accessibility Hub. It is separate from the public static landing and walkthrough. The service is intentionally limited to its bundled synthetic course handout while the Coastline data and infrastructure decisions are incomplete.
 
+## Product shell
+
+The private service uses the unmodified official white Coastline College horizontal logo at `assets/coastline-college-logo-white.png`, sourced from Coastline's live header asset: `https://www.coastline.edu/_files/img/new-navigation-images/coastlinecollege_whitetext_800x240.png`. It is used only on the deep institutional-navy shell. The application does not create or recolor a Coastline mark, and it does not use GradRoots assets.
+
+The workspace palette anchors on Coastline navy `#003764`, with porcelain surfaces, selective light-blue interaction states (`#6BC4E8` / `#3CB4E5`), ocean controls, and copper only for progress/repair emphasis.
+
 ## What runs locally now
 
 With an explicit staging access code and session secret, the service provides:

@@ -71,6 +71,13 @@ class StagingServiceTests(unittest.TestCase):
         status, _, _ = self.request("/app")
         self.assertTrue(status.startswith("303"))
 
+    def test_private_shell_serves_the_unmodified_official_coastline_logo(self):
+        status, headers, payload = self.request("/assets/coastline-college-logo-white.png")
+        self.assertTrue(status.startswith("200"))
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertTrue(payload.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn(b"coastline-college-logo-white.png", self.request("/login")[2])
+
     def test_private_synthetic_document_to_recheck_flow(self):
         self.login()
         status, headers, _ = self.request("/documents/synthetic", "POST")
@@ -83,7 +90,8 @@ class StagingServiceTests(unittest.TestCase):
         status, _, page = self.request(f"/documents/{document_id}")
         self.assertTrue(status.startswith("200"))
         self.assertIn(b"needs attention", page)
-        self.assertIn(b"Apply a metadata repair", page)
+        self.assertIn(b"Fix Lab", page)
+        self.assertIn(b"Update title and language", page)
 
         status, headers, _ = self.request(
             f"/documents/{document_id}/remediate/metadata", "POST",
