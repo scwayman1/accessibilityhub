@@ -1,10 +1,12 @@
 import base64
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from threading import Thread
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from pypdf import PdfReader
@@ -207,6 +209,88 @@ class FixSemanticsEndpointTests(unittest.TestCase):
         })
         self.assertIn("<h1 data-block", result["html"])
         self.assertEqual(result["stats"]["roles_applied"], 1)
+
+
+class StructureAndOcrEndpointTests(unittest.TestCase):
+    def setUp(self):
+        def checker(pdf_path: Path, output_dir: Path) -> dict:
+            return analyze(pdf_path, output_dir)
+        self.server = create_server(0, checker)
+        Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def post_json(self, path: str, payload: dict):
+        request = Request(self.base + path, data=json.dumps(payload).encode(),
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request, timeout=120) as response:
+            return json.loads(response.read())
+
+    def post_json_expecting_error(self, path: str, payload: dict) -> tuple[int, dict]:
+        try:
+            self.post_json(path, payload)
+        except HTTPError as error:
+            return error.code, json.loads(error.read())
+        self.fail(f"POST {path} unexpectedly succeeded")
+
+    def post_pdf(self, path: str, payload: bytes) -> dict:
+        request = Request(self.base + path, data=payload, method="POST")
+        with urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+
+    def test_blocks_endpoint_exposes_the_shared_block_index_space(self):
+        result = self.post_pdf("/api/blocks", untagged_pdf())
+        self.assertEqual(result["blocks"], ["Plain text, no tags."])
+
+    def test_fix_structure_builds_a_verified_tag_tree_end_to_end(self):
+        result = self.post_json("/api/fix-structure", {
+            "filename": "doc.pdf",
+            "pdf_base64": base64.b64encode(untagged_pdf()).decode(),
+            "confirmed_roles": {"0": "h1"},
+        })
+        before = {f["rule_id"] for f in result["before"]["findings"]}
+        after_strengths = {s["rule_id"] for s in result["after"].get("strengths", [])}
+        self.assertIn("PDF.STRUCTURE.SEMANTICS", before)
+        self.assertIn("PDF.STRUCTURE.SEMANTICS", after_strengths)
+        self.assertEqual(result["remediation"]["verification"],
+                         {"text_preserved": True, "pages_preserved": True})
+        fixed = base64.b64decode(result["fixed_pdf_base64"])
+        reader = PdfReader(io.BytesIO(fixed))
+        self.assertEqual(reader.pages[0].extract_text().strip(), "Plain text, no tags.")
+
+    def test_fix_structure_declines_an_already_tagged_pdf(self):
+        code, body = self.post_json_expecting_error("/api/fix-structure", {
+            "filename": "doc.pdf",
+            "pdf_base64": base64.b64encode(tagged_figure_pdf(with_alt=True)).decode(),
+            "confirmed_roles": {"0": "h1"},
+        })
+        self.assertEqual(code, 400)
+        self.assertIn("already carries a structure tree", body["error"])
+
+    def test_fix_ocr_declines_a_fully_texted_pdf_with_routing(self):
+        code, body = self.post_json_expecting_error("/api/fix-ocr", {
+            "filename": "doc.pdf",
+            "pdf_base64": base64.b64encode(untagged_pdf()).decode(),
+        })
+        self.assertEqual(code, 400)
+        self.assertIn("no scanned pages", body["error"])
+
+    @unittest.skipUnless(shutil.which("tesseract"), "tesseract binary is not installed")
+    def test_fix_ocr_applies_a_text_layer_to_a_scan_end_to_end(self):
+        from test_ocr import scan_pdf
+        result = self.post_json("/api/fix-ocr", {
+            "filename": "scan.pdf",
+            "pdf_base64": base64.b64encode(scan_pdf()).decode(),
+        })
+        before = {f["rule_id"] for f in result["before"]["findings"]}
+        after = {f["rule_id"] for f in result["after"]["findings"]}
+        self.assertIn("PDF.TEXT_LAYER", before)
+        self.assertNotIn("PDF.TEXT_LAYER", after)
+        self.assertEqual(result["remediation"]["actions"][0]["provenance"], "ocr_generated")
+        self.assertTrue(base64.b64decode(result["fixed_pdf_base64"]).startswith(b"%PDF-"))
 
 
 if __name__ == "__main__":

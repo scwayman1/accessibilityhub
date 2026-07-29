@@ -115,12 +115,58 @@ This loop closes the remediation gap:
 Tests: `tests/test_fixlab.py` (13) + drafting-task tests in
 `tests/test_intelligence.py` (6); 124 total. Browser-verified end to end.
 
+## Agent storm — tag trees and OCR text layers (2026-07-29)
+
+The two hardest remaining in-place repairs, built by a parallel agent
+pipeline (scout → build → adversary per track, six agents), then integrated
+and browser-verified:
+
+- **Human-confirmed tag-tree building (`tina/structure.py`,
+  `StructureRemediation`, `document.remediate.structure`):** on an untagged
+  PDF, the human confirms each extracted text block's role (h1/h2/h3/p/li,
+  optional logical reading order) and the tool wraps every text run in
+  marked content (BDC/EMC with MCIDs), builds
+  StructTreeRoot → Document → leaf structure elements (consecutive list
+  items grouped under /L → /LI → /LBody), and wires the ParentTree. The
+  **anti-vandal contract** is asserted, never trusted: the output is
+  re-opened with a fresh parser and must show identical page count and
+  per-page extracted text, or no bytes leave the tool. It declines honestly —
+  already-tagged PDFs, any existing marked content (including MP/DP),
+  encrypted files, blocks that cannot be mapped 1:1 onto content runs,
+  conflicting or malformed confirmations, non-permutation reading orders —
+  and routes to the HTML rebuild instead of guessing.
+- **OCR text layers for scans (`tina/ocr.py`, `OcrRemediation`,
+  `document.remediate.ocr`):** pages that are a single full-page scan image
+  with no extractable text gain an invisible (text rendering mode 3),
+  positionally mapped text layer from local tesseract (word confidence
+  floor 40). The scan image is never altered, texted pages are untouched
+  (verified after the fact), provenance is `ocr_generated`, and the report
+  says plainly that recognition errors are likely and a human must review.
+  Declines honestly: no eligible pages, rotated pages, degenerate geometry,
+  nothing legible, engine missing or timing out.
+- **Adversary pass found and fixed 9 real defects** before integration,
+  including silent role-key collisions, reading-order coercion that applied
+  unconfirmed structure, an MP/DP marked-content blind spot, a KeyError
+  crash on image-only pages without content streams, and OCR text collapsing
+  on zero-area pages — each now a regression test.
+- **Integration:** `POST /api/fix-structure`, `POST /api/fix-ocr`,
+  `POST /api/blocks`; Fix Lab panels on the tags/reading-order and
+  extractable-text findings (block-by-block role confirmation with optional
+  consent-gated AI proposals, one-click OCR apply); knowledge cards updated;
+  both modules under the outcome-language governance scan; CI now installs
+  tesseract so the real OCR path runs.
+
+Tests: `tests/test_structure.py` (30) + `tests/test_ocr.py` (18) + endpoint
+tests in `tests/test_fixlab.py` (5 new); 177 total. Browser-verified: an
+untagged three-block PDF gained a verified structure tree from confirmed
+roles, and a scanned page's extractable-text finding resolved after OCR.
+
 ## Phase status at a glance
 
 | PRD phase | Status |
 |---|---|
 | 1. Honest Local Review | **Shipped** (spike scope: PDF only) |
-| 2. Fix and Verify | **Shipped** (metadata repairs; evidence receipts; judgment attestations) |
+| 2. Fix and Verify | **Shipped** (metadata, link-name, and alt-text repairs; human-confirmed tag-tree building; OCR text layers; evidence receipts; judgment attestations) |
 | 3. Learning Journey | **Substantially shipped** (evidence-based mastery incl. practiced via authored micro-lessons, points/streaks/badges, repeat-defect tracking; challenges and portfolio not yet built) |
 | 4. HTML Escape Hatch | **Shipped** (extraction draft + offline editor; AI-assisted reconstruction not built) |
 | 5. Institutional Transformation | **Not started** (design only: `tina-private-beta-intake.md`) |

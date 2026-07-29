@@ -22,21 +22,23 @@
     },
     "PDF.STRUCTURE.SEMANTICS": {
       "title": "Tags and reading order",
-      "why_it_matters": "Tags tell assistive technology what each part of the page is — heading, list, table, paragraph — and what order to read it in. Without them, a screen reader gets a flat stream of text with no landmarks.",
+      "why_it_matters": "Tags tell assistive technology what each part of the page is \u2014 heading, list, table, paragraph \u2014 and what order to read it in. Without them, a screen reader gets a flat stream of text with no landmarks.",
       "who_it_affects": "Screen reader users most of all; also anyone using reflow on a phone or reading tools that rely on structure.",
-      "fix_at_source": "Use real heading styles, lists, and table tools in the source document, then export with 'tagged PDF' or 'document structure' enabled. Repairing tags after export is much harder than exporting them correctly.",
-      "auto_fixable": false
+      "fix_at_source": "Use real heading styles, lists, and table tools in the source document, then export with 'tagged PDF' or 'document structure' enabled. If only the exported PDF exists, the Fix Lab below can build a tag tree from roles you confirm block by block \u2014 and declines to the HTML rebuild when the page content cannot be matched exactly.",
+      "auto_fixable": false,
+      "fix_lab": "structure"
     },
     "PDF.TEXT_LAYER": {
       "title": "Extractable text",
-      "why_it_matters": "Pages without a text layer are usually scans — pictures of words. Screen readers cannot read pictures, and students cannot search, copy, or highlight them.",
+      "why_it_matters": "Pages without a text layer are usually scans \u2014 pictures of words. Screen readers cannot read pictures, and students cannot search, copy, or highlight them.",
       "who_it_affects": "Screen reader users completely; every student who searches, copies quotes, or uses read-aloud tools.",
-      "fix_at_source": "Find the original digital document if it exists. If only a scan exists, run recognized OCR and then review the result — OCR output still needs a human check.",
-      "auto_fixable": false
+      "fix_at_source": "Find the original digital document if it exists. If only a scan exists, the Fix Lab below can apply a local OCR text layer to a copy \u2014 the recognized text is machine-generated and still needs a human check against the page images.",
+      "auto_fixable": false,
+      "fix_lab": "ocr"
     },
     "PDF.IMAGES.ALT_MISSING": {
       "title": "Figures missing alt text",
-      "why_it_matters": "These images are tagged as figures — the structure is there — but no description was ever attached. A screen reader announces each one as an unnamed image and moves on, leaving the reader to guess what they missed.",
+      "why_it_matters": "These images are tagged as figures \u2014 the structure is there \u2014 but no description was ever attached. A screen reader announces each one as an unnamed image and moves on, leaving the reader to guess what they missed.",
       "who_it_affects": "Blind and low-vision students most directly; the description you write is the entire image for them.",
       "fix_at_source": "You write the description (or mark the image decorative); the tool attaches it to the figure element in a copy and re-checks. In the source application, add alt text as you insert each image.",
       "auto_fixable": false,
@@ -44,14 +46,14 @@
     },
     "PDF.IMAGES.ALTERNATIVES": {
       "title": "Image descriptions",
-      "why_it_matters": "An image with no text alternative is silent for a screen reader user. A short description of why the image is there — not what every pixel shows — carries its meaning to everyone.",
+      "why_it_matters": "An image with no text alternative is silent for a screen reader user. A short description of why the image is there \u2014 not what every pixel shows \u2014 carries its meaning to everyone.",
       "who_it_affects": "Blind and low-vision students, and anyone on a slow connection where images fail to load.",
       "fix_at_source": "Add alt text to each meaningful image in the source document, and mark purely decorative images as decorative, then re-export.",
       "auto_fixable": false
     },
     "PDF.LINKS.NAME": {
       "title": "Links without a name",
-      "why_it_matters": "A link with no accessible description is announced by its raw URL — or as just 'link'. Screen reader users navigating by link list get a list of destinations with no information in it.",
+      "why_it_matters": "A link with no accessible description is announced by its raw URL \u2014 or as just 'link'. Screen reader users navigating by link list get a list of destinations with no information in it.",
       "who_it_affects": "Screen reader users navigating by link list, and anyone whose software reads links aloud.",
       "fix_at_source": "You describe each link's destination; the tool writes the description onto the link annotation in a copy and re-checks. In the source, write meaningful link text before exporting.",
       "auto_fixable": false,
@@ -66,7 +68,7 @@
     },
     "PDF.INTAKE.ENCRYPTED": {
       "title": "Encrypted document",
-      "why_it_matters": "Password protection and permission restrictions can block assistive technology from reading the document at all — and they block this reviewer too.",
+      "why_it_matters": "Password protection and permission restrictions can block assistive technology from reading the document at all \u2014 and they block this reviewer too.",
       "who_it_affects": "Assistive technology users first, and eventually everyone when the password is lost.",
       "fix_at_source": "Get an unencrypted copy from the document owner. If restrictions are required, verify that accessibility permissions remain enabled.",
       "auto_fixable": false
@@ -74,14 +76,14 @@
     "PDF.INTAKE.QPDF_CHECK": {
       "title": "Damaged PDF structure",
       "why_it_matters": "A structurally damaged PDF may open in one viewer and fail in another. Assistive technology is usually the first thing to break on a damaged file.",
-      "who_it_affects": "Everyone, unpredictably — different tools fail in different ways.",
+      "who_it_affects": "Everyone, unpredictably \u2014 different tools fail in different ways.",
       "fix_at_source": "Go back to the source document and export a fresh PDF rather than repairing the damaged copy.",
       "auto_fixable": false
     },
     "PDF.INTAKE.QPDF_UNAVAILABLE": {
       "title": "Structure checker not installed",
       "why_it_matters": "This review ran without qpdf, so structural integrity evidence is missing from the report. The findings you see are still valid; the report is just less complete.",
-      "who_it_affects": "The completeness of this review only — not the document itself.",
+      "who_it_affects": "The completeness of this review only \u2014 not the document itself.",
       "fix_at_source": "Install qpdf on this computer to include structural checks in future reviews.",
       "auto_fixable": false
     },
@@ -95,7 +97,7 @@
     "PDF.VERAPDF.UNAVAILABLE": {
       "title": "Validator not available",
       "why_it_matters": "The containerized veraPDF validator did not run on this computer, so the machine-checkable PDF/UA evidence is missing from this review. The findings you see are still valid; the report is just less complete.",
-      "who_it_affects": "The completeness of this review only — not the document itself.",
+      "who_it_affects": "The completeness of this review only \u2014 not the document itself.",
       "fix_at_source": "Make the pinned veraPDF image available locally so future reviews can include validator evidence.",
       "auto_fixable": false
     },
