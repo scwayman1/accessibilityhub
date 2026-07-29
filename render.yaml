@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: accessibility-hub-staging
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 4 --bind 0.0.0.0:$PORT service.wsgi:application
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: HUB_ENV
+        value: staging
+      - key: HUB_STAGING_ACCESS_CODE
+        sync: false
+      - key: HUB_SESSION_SECRET
+        sync: false
+      - key: HUB_PRIVATE_OBJECT_STORAGE
+        sync: false
+      - key: HUB_MALWARE_SCAN_GATE
+        sync: false
+      - key: HUB_WORKER_ISOLATION_ATTESTATION
+        sync: false
+      - key: HUB_TENANT_AUTH_ISSUER
+        sync: false
+      - key: HUB_LIFECYCLE_POLICY_ID
+        sync: false
+      - key: HUB_AUDIT_SINK
+        sync: false
