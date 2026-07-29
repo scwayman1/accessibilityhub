@@ -94,9 +94,10 @@ def indirect(value: Any) -> Any:
         return value
 
 
-def count_page_objects(page: Any) -> tuple[int, int]:
+def count_page_objects(page: Any) -> tuple[int, list[dict[str, Any]]]:
+    """Count image XObjects and detail each link annotation on a page."""
     images = 0
-    links = 0
+    links: list[dict[str, Any]] = []
     resources = indirect(page.get("/Resources", {})) or {}
     xobjects = indirect(resources.get("/XObject", {})) or {}
     for _, raw in xobjects.items():
@@ -106,8 +107,42 @@ def count_page_objects(page: Any) -> tuple[int, int]:
     for raw in page.get("/Annots", []) or []:
         annotation = indirect(raw)
         if annotation and annotation.get("/Subtype") == "/Link":
-            links += 1
+            action = indirect(annotation.get("/A", {})) or {}
+            name = annotation.get("/Contents")
+            links.append({
+                "uri": str(action.get("/URI")) if action.get("/URI") else None,
+                "named": bool(name and str(name).strip()),
+            })
     return images, links
+
+
+def iter_figures(struct_root: Any) -> list[dict[str, Any]]:
+    """Walk the structure tree and detail every /Figure element in document order."""
+    figures: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    def walk(node: Any) -> None:
+        node = indirect(node)
+        if node is None or not hasattr(node, "get"):
+            return
+        identity = id(node)
+        if identity in seen:
+            return
+        seen.add(identity)
+        if node.get("/S") == "/Figure":
+            # /Alt present counts as decided — an explicit empty string marks decorative.
+            figures.append({"element": node, "has_alt": node.get("/Alt") is not None})
+        kids = node.get("/K")
+        if kids is None:
+            return
+        kids = indirect(kids)
+        for kid in (kids if isinstance(kids, list) else [kids]):
+            kid = indirect(kid)
+            if hasattr(kid, "get"):
+                walk(kid)
+
+    walk(struct_root)
+    return figures
 
 
 def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
@@ -273,31 +308,69 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "evidence": "A tagged structure tree exists. Whether the tags convey correct meaning still requires human review.",
             })
 
-        images = links = pages_without_text = 0
+        images = pages_without_text = 0
+        links: list[dict[str, Any]] = []
         for index, page in enumerate(reader.pages, start=1):
             text = (page.extract_text() or "").strip()
             if not text:
                 pages_without_text += 1
-            image_count, link_count = count_page_objects(page)
+            image_count, page_links = count_page_objects(page)
             images += image_count
-            links += link_count
-        metadata.update({"image_objects": images, "link_annotations": links, "pages_without_extractable_text": pages_without_text})
+            for link in page_links:
+                links.append({"index": len(links), "page": index, **link})
+        figures = iter_figures(indirect(root.get("/StructTreeRoot"))) if metadata["has_structure_tree"] else []
+        figures_missing_alt = sum(1 for figure in figures if not figure["has_alt"])
+        metadata.update({
+            "image_objects": images,
+            "link_annotations": len(links),
+            "links": links,
+            "figure_elements": len(figures),
+            "figures": [{"index": i, "has_alt": f["has_alt"]} for i, f in enumerate(figures)],
+            "figures_missing_alt": figures_missing_alt,
+            "pages_without_extractable_text": pages_without_text,
+        })
         if pages_without_text:
             findings.append(finding(
                 "review_required", "PDF.TEXT_LAYER", "high", "document pages",
                 f"{pages_without_text} of {len(reader.pages)} pages had no extractable text using pypdf.",
                 "Classify as scan/image-based or parser-limited; route for OCR assessment and human review.",
             ))
+        if figures_missing_alt:
+            findings.append(finding(
+                "deterministic_defect", "PDF.IMAGES.ALT_MISSING", "high", "structure tree /Figure elements",
+                f"{figures_missing_alt} of {len(figures)} tagged figure element(s) have no alternative text (/Alt).",
+                "Write a description for each figure (or mark it decorative); the fix is applied to a copy and rechecked.",
+            ))
+        elif figures:
+            strengths.append({
+                "rule_id": "PDF.IMAGES.ALT_MISSING",
+                "status": "machine_verified",
+                "evidence": f"All {len(figures)} tagged figure element(s) carry an /Alt entry. Whether each description is meaningful still requires human review.",
+            })
         if images:
             findings.append(finding(
                 "review_required", "PDF.IMAGES.ALTERNATIVES", "medium", "page resources",
                 f"Detected {images} image XObject(s). This count does not determine whether alternatives are meaningful.",
-                "Review image purpose and text alternatives with a human reviewer.",
+                "Review image purpose and text alternatives with a human reviewer."
+                + ("" if metadata["has_structure_tree"] else " This PDF has no tag structure, so alt text cannot be attached here — rebuild it as an accessible HTML working copy instead."),
             ))
+        unnamed_links = [link for link in links if not link["named"]]
+        if unnamed_links:
+            findings.append(finding(
+                "deterministic_defect", "PDF.LINKS.NAME", "medium", "link annotations",
+                f"{len(unnamed_links)} of {len(links)} link annotation(s) have no accessible description (/Contents).",
+                "Give each link a description of its destination; the fix is applied to a copy and rechecked.",
+            ))
+        elif links:
+            strengths.append({
+                "rule_id": "PDF.LINKS.NAME",
+                "status": "machine_verified",
+                "evidence": f"All {len(links)} link annotation(s) carry an accessible description.",
+            })
         if links:
             findings.append(finding(
                 "review_required", "PDF.LINKS.PURPOSE", "low", "link annotations",
-                f"Detected {links} link annotation(s). Link purpose requires contextual review.",
+                f"Detected {len(links)} link annotation(s). Link purpose requires contextual review.",
                 "Review link text and destination purpose in context.",
             ))
 

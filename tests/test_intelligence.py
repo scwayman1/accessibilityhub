@@ -53,6 +53,76 @@ class FakeModelServer:
         self.server.server_close()
 
 
+class DraftingTaskTests(unittest.TestCase):
+    """The model proposes; the human decides. Both drafting tasks are bounded."""
+
+    def test_alt_draft_sends_the_image_and_returns_a_labeled_draft(self):
+        fake = FakeModelServer(json.dumps({"draft": "Enrollment chart showing growth after 2022.",
+                                           "uncertainty": "The author's emphasis cannot be known from the image."}))
+        try:
+            gateway = IntelligenceGateway()
+            gateway.configure(fake.base_url, "vision-model")
+            result = gateway.draft_alt_text("aGVsbG8=", "image/png", context="the pattern above", consent=True)
+            self.assertEqual(result["source"], "model")
+            self.assertIn("never applied without you", result["label"])
+            content = fake.requests[-1]["messages"][0]["content"]
+            self.assertTrue(any(part.get("type") == "image_url" for part in content))
+        finally:
+            fake.close()
+
+    def test_alt_draft_requires_consent_and_rejects_conformance_claims(self):
+        fake = FakeModelServer(json.dumps({"draft": "With this alt text the document is fully accessible.",
+                                           "uncertainty": "None."}))
+        try:
+            gateway = IntelligenceGateway()
+            gateway.configure(fake.base_url, "vision-model")
+            with self.assertRaises(IntelligenceError):
+                gateway.draft_alt_text("aGVsbG8=", "image/png", consent=False)
+            with self.assertRaises(IntelligenceError):
+                gateway.draft_alt_text("aGVsbG8=", "image/png", consent=True)
+        finally:
+            fake.close()
+
+    def test_structure_proposal_returns_allowlisted_roles_only(self):
+        fake = FakeModelServer(json.dumps({"roles": [{"index": 0, "role": "h1"}, {"index": 1, "role": "p"}]}))
+        try:
+            gateway = IntelligenceGateway()
+            gateway.configure(fake.base_url, "test-model")
+            result = gateway.propose_structure(["Course Syllabus", "Welcome to the course."], consent=True)
+            self.assertEqual(result["roles"], {"0": "h1", "1": "p"})
+            self.assertIn("candidate for you to confirm", result["label"])
+        finally:
+            fake.close()
+
+    def test_structure_proposal_rejects_roles_outside_the_allowlist(self):
+        fake = FakeModelServer(json.dumps({"roles": [{"index": 0, "role": "script"}]}))
+        try:
+            gateway = IntelligenceGateway()
+            gateway.configure(fake.base_url, "test-model")
+            with self.assertRaises(IntelligenceError) as context:
+                gateway.propose_structure(["Hello"], consent=True)
+            self.assertIn("allowlist", str(context.exception))
+        finally:
+            fake.close()
+
+    def test_structure_proposal_rejects_phantom_block_indexes(self):
+        fake = FakeModelServer(json.dumps({"roles": [{"index": 7, "role": "p"}]}))
+        try:
+            gateway = IntelligenceGateway()
+            gateway.configure(fake.base_url, "test-model")
+            with self.assertRaises(IntelligenceError):
+                gateway.propose_structure(["Only one block"], consent=True)
+        finally:
+            fake.close()
+
+    def test_manifests_disclose_what_leaves_the_machine(self):
+        alt = IntelligenceGateway.alt_draft_manifest(2048, "nearby text")
+        self.assertTrue(any("One image" in item for item in alt["will_send"]))
+        structure = IntelligenceGateway.structure_manifest(["a", "bb"])
+        self.assertTrue(any("extracted text" in item for item in structure["will_send"]))
+        self.assertIn("sensitive", structure["note"])
+
+
 class IntelligenceGatewayTests(unittest.TestCase):
     def test_deterministic_only_until_configured_and_status_never_leaks_keys(self):
         gateway = IntelligenceGateway()

@@ -28,7 +28,7 @@ Validate whether Coastline Accessibility Studio can produce a useful, source-loc
 
 - Local files only. The browser sends the selected PDF only to the loopback reviewer on this computer; there is no remote or public upload endpoint.
 - No external AI or model calls.
-- Remediation is limited to deterministic, permission-gated metadata fixes applied to an in-memory copy; the original file is never rewritten or persisted.
+- Remediation is permission-gated and applied only to an in-memory copy — metadata, human-authored link names and alt text, human-confirmed tag trees, and OCR text layers; the original file is never rewritten or persisted, and every mutation records before/after hashes.
 - Output is a technical findings report, **not** a PDF/UA, WCAG, Section 508, or legal compliance certification.
 - Use the public Coastline sponsorship packet already in `client/public/` as the initial fixture; do not use student, faculty, or protected records.
 
@@ -106,6 +106,40 @@ The workbench closes the loop on the findings it can deterministically resolve:
 - Structural findings (tags, reading order, image alternatives, OCR) remain
   routed to human review; the fix banner states explicitly that resolving
   technical findings is not a conformance result.
+
+### Fix Lab — the asset comes out more accessible
+
+- **Link names**: unnamed links are an itemized, fixable defect. You describe
+  each destination; the tool writes it onto the link annotation in a copy and
+  the re-check proves it (`PDF.LINKS.NAME` → verified strength).
+- **Figure alt text**: on tagged PDFs, figures without `/Alt` are itemized and
+  fixable — you see each image, write its description (or mark it decorative),
+  and the fix is applied and re-checked. On untagged PDFs the tool declines
+  honestly and routes you to the HTML rebuild, which carries your descriptions.
+- **Tag-tree building from your confirmations**: on an untagged PDF, you
+  confirm what each text block *is* (heading level, paragraph, list item,
+  optionally the logical reading order) and the tool builds real PDF
+  structure tags — marked content with MCIDs, a structure tree, the
+  ParentTree — in a copy, then proves on re-check that the page count and
+  every page's extracted text are identical to the source. If the blocks
+  cannot be matched onto the page content exactly (or the PDF already
+  carries any tagging), it declines and routes you to the HTML rebuild
+  instead of guessing.
+- **OCR text layers for scans**: pages that are a single full-page scan
+  image with no text gain an invisible, positioned text layer from the
+  local tesseract engine — the scan image is never altered, pages with text
+  are left untouched, and the report states that the recognized text is
+  machine-generated and needs human review. No engine, nothing legible, or
+  rotated/odd geometry → an honest decline, never silent misplacement.
+- **AI drafts, human decisions**: with a model connected, "Draft with AI"
+  sends one image (after you approve the egress manifest) and returns a
+  labeled draft you edit or replace; "AI-structured HTML draft" and
+  "Propose roles with AI" in the tag-tree builder propose heading/list
+  roles for the extracted text — roles only, from an allowlist, every one
+  yours to change before anything is applied. The model never applies
+  anything and never decides what is decorative.
+- Every session ends with the outputs tracked on screen: **updated PDF,
+  accessible HTML, evidence receipt.**
 
 ### Prove and improve — receipts, judgments, and the learning journey
 

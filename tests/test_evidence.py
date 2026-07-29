@@ -92,6 +92,8 @@ class OutcomeLanguageGovernanceTests(unittest.TestCase):
         "tina/learning.py",
         "tina/intelligence.py",
         "tina/lessons.py",
+        "tina/structure.py",
+        "tina/ocr.py",
         "foundation_ads.json",
         "lesson_content.json",
     ]

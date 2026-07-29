@@ -103,8 +103,26 @@ def _page_paragraphs(text: str) -> list[str]:
     return [" ".join(block.split()) for block in blocks]
 
 
+def extract_blocks(payload: bytes) -> list[str]:
+    """The draft's text blocks, in the exact order the converter emits them —
+    the shared index space for structure proposals."""
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception as error:
+        raise DerivationError(f"The PDF could not be parsed: {type(error).__name__}") from error
+    if reader.is_encrypted:
+        raise DerivationError("Encrypted PDFs are not converted; request an unencrypted source copy.")
+    blocks: list[str] = []
+    for page in reader.pages:
+        blocks.extend(_page_paragraphs(page.extract_text() or ""))
+    return blocks
+
+
 def _extract_html_draft(input_data: dict[str, Any]) -> dict[str, Any]:
     payload: bytes = input_data["payload"]
+    # Optional human-confirmed / model-proposed roles per block index (h1|h2|h3|p|li).
+    roles: dict[str, str] = {str(k): v for k, v in (input_data.get("roles") or {}).items()
+                             if v in {"h1", "h2", "h3", "p", "li"}}
     try:
         reader = PdfReader(io.BytesIO(payload), strict=False)
     except Exception as error:
@@ -122,14 +140,37 @@ def _extract_html_draft(input_data: dict[str, Any]) -> dict[str, Any]:
     language = str(root.get("/Lang")) if root.get("/Lang") else ""
 
     sections: list[str] = []
-    stats = {"pages": len(reader.pages), "paragraphs": 0, "images_embedded": 0, "images_not_extracted": 0, "pages_without_text": 0}
+    stats = {"pages": len(reader.pages), "paragraphs": 0, "images_embedded": 0,
+             "images_not_extracted": 0, "pages_without_text": 0, "roles_applied": 0}
+    block_index = 0
+    open_list = False
     for number, page in enumerate(reader.pages, start=1):
         parts: list[str] = [f'<section aria-label="Content extracted from page {number}">']
         paragraphs = _page_paragraphs(page.extract_text() or "")
         if not paragraphs:
             stats["pages_without_text"] += 1
         for paragraph in paragraphs:
-            parts.append(f"<p data-block>{html.escape(paragraph)}</p>")
+            role = roles.get(str(block_index), "p")
+            block_index += 1
+            escaped = html.escape(paragraph)
+            proposed = ' data-proposed="model"' if str(block_index - 1) in roles else ""
+            if role == "li":
+                if not open_list:
+                    parts.append("<ul>")
+                    open_list = True
+                parts.append(f"<li data-block{proposed}>{escaped}</li>")
+                stats["roles_applied"] += bool(proposed)
+                continue
+            if open_list:
+                parts.append("</ul>")
+                open_list = False
+            tag = role if role in {"h1", "h2", "h3"} else "p"
+            if proposed:
+                stats["roles_applied"] += 1
+            parts.append(f"<{tag} data-block{proposed}>{escaped}</{tag}>")
+        if open_list:
+            parts.append("</ul>")
+            open_list = False
         stats["paragraphs"] += len(paragraphs)
         try:
             images = list(page.images)
@@ -176,6 +217,36 @@ def _extract_html_draft(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def extract_images(payload: bytes, limit: int = 20) -> list[dict[str, Any]]:
+    """Extract embedded images (browser-safe base64) so a human can see what
+    they are describing. Read-only; never persisted."""
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception as error:
+        raise DerivationError(f"The PDF could not be parsed: {type(error).__name__}") from error
+    if reader.is_encrypted:
+        raise DerivationError("Encrypted PDFs are not inspected; request an unencrypted source copy.")
+    results: list[dict[str, Any]] = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        try:
+            images = list(page.images)
+        except Exception:
+            images = []
+        for image in images:
+            if len(results) >= limit:
+                return results
+            mime = _detect_image(image.data or b"")
+            if mime is None:
+                continue
+            results.append({
+                "index": len(results),
+                "page": page_number,
+                "mime": mime,
+                "base64": base64.b64encode(image.data).decode("ascii"),
+            })
+    return results
+
+
 class HtmlDraftConverter:
     """Deterministic PDF-to-editable-HTML derivation behind the tool gateway."""
 
@@ -202,8 +273,8 @@ class HtmlDraftConverter:
         )
         return cls(gateway)
 
-    def convert(self, filename: str, payload: bytes) -> dict[str, Any]:
-        execution = self.gateway.execute("extract_html_draft", {"payload": payload}, {DERIVE_HTML_PERMISSION})
+    def convert(self, filename: str, payload: bytes, roles: dict[str, str] | None = None) -> dict[str, Any]:
+        execution = self.gateway.execute("extract_html_draft", {"payload": payload, "roles": roles}, {DERIVE_HTML_PERMISSION})
         return {
             "contract_version": self.CONTRACT_VERSION,
             "claim_boundary": self.CLAIM_BOUNDARY,

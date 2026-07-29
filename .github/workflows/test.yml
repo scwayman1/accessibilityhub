@@ -18,7 +18,9 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Install OCR engine
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
       - name: Compile Python modules
-        run: python -m py_compile check_pdf.py local_reviewer.py tina/kernel.py tina/remedy.py
+        run: python -m py_compile check_pdf.py local_reviewer.py tina/kernel.py tina/remedy.py tina/derive.py tina/evidence.py tina/learning.py tina/intelligence.py tina/lessons.py tina/structure.py tina/ocr.py
       - name: Run unit tests
         run: python -m unittest discover -s tests -v

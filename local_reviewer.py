@@ -13,15 +13,17 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from tina.derive import DerivationError, HtmlDraftConverter
+from tina.derive import DerivationError, HtmlDraftConverter, extract_blocks as derive_blocks, extract_images
 from tina.evidence import build_receipt
 from tina.intelligence import IntelligenceError, IntelligenceGateway
 from tina.learning import LearningJourney
 from tina.lessons import LessonError, LessonLibrary
-from tina.remedy import MetadataRemediation, RemediationError
+from tina.ocr import OcrRemediation
+from tina.remedy import MetadataRemediation, RemediationError, SemanticRemediation
+from tina.structure import StructureRemediation
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
-MAX_JSON_BYTES = 10 * 1024 * 1024
+MAX_JSON_BYTES = 80 * 1024 * 1024  # fix-semantics carries the PDF as base64
 
 
 class UploadValidationError(ValueError):
@@ -87,13 +89,79 @@ def run_local_fix(
     }
 
 
-def run_local_convert(filename: str, payload: bytes) -> dict[str, Any]:
+def run_local_convert(filename: str, payload: bytes, roles: dict[str, str] | None = None) -> dict[str, Any]:
     """Derive an editable HTML working copy from the PDF without mutating or persisting it."""
     validate_pdf_upload(filename, payload)
     converter = HtmlDraftConverter.with_builtin_tools()
-    report = converter.convert(filename, payload)
+    report = converter.convert(filename, payload, roles=roles)
     report["draft_filename"] = f"{Path(filename).stem}.draft.html"
     return report
+
+
+def run_local_fix_semantics(
+    filename: str,
+    payload: bytes,
+    checker: Callable[[Path, Path], dict[str, Any]],
+    link_names: dict[str, str] | None,
+    alt_texts: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Attach human-authored link descriptions / figure alt text to a copy, then re-review it."""
+    before = run_local_review(filename, payload, checker)
+    remediation = SemanticRemediation.with_builtin_tools()
+    fixed_payload, remediation_report = remediation.apply(filename, payload, link_names=link_names, alt_texts=alt_texts)
+    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    after = run_local_review(fixed_filename, fixed_payload, checker)
+    return {
+        "before": normalize_report_for_browser(before),
+        "after": normalize_report_for_browser(after),
+        "remediation": remediation_report,
+        "fixed_filename": fixed_filename,
+        "fixed_pdf_base64": base64.b64encode(fixed_payload).decode("ascii"),
+    }
+
+
+def run_local_fix_structure(
+    filename: str,
+    payload: bytes,
+    checker: Callable[[Path, Path], dict[str, Any]],
+    confirmed_roles: dict[str, str] | None,
+    reading_order: list[int] | None,
+) -> dict[str, Any]:
+    """Build a tag tree in a copy from human-confirmed block roles, then re-review it."""
+    before = run_local_review(filename, payload, checker)
+    remediation = StructureRemediation.with_builtin_tools()
+    fixed_payload, remediation_report = remediation.apply(
+        filename, payload, confirmed_roles=confirmed_roles or {}, reading_order=reading_order,
+    )
+    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    after = run_local_review(fixed_filename, fixed_payload, checker)
+    return {
+        "before": normalize_report_for_browser(before),
+        "after": normalize_report_for_browser(after),
+        "remediation": remediation_report,
+        "fixed_filename": fixed_filename,
+        "fixed_pdf_base64": base64.b64encode(fixed_payload).decode("ascii"),
+    }
+
+
+def run_local_fix_ocr(
+    filename: str,
+    payload: bytes,
+    checker: Callable[[Path, Path], dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply an OCR text layer to eligible scanned pages of a copy, then re-review it."""
+    before = run_local_review(filename, payload, checker)
+    remediation = OcrRemediation.with_builtin_tools()
+    fixed_payload, remediation_report = remediation.apply(filename, payload)
+    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    after = run_local_review(fixed_filename, fixed_payload, checker)
+    return {
+        "before": normalize_report_for_browser(before),
+        "after": normalize_report_for_browser(after),
+        "remediation": remediation_report,
+        "fixed_filename": fixed_filename,
+        "fixed_pdf_base64": base64.b64encode(fixed_payload).decode("ascii"),
+    }
 
 
 def run_spike_checker(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
@@ -251,6 +319,76 @@ def create_server(
                     pass
                 self.send_json(HTTPStatus.OK, receipt)
                 return
+            if request_url.path == "/api/fix-semantics":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    payload_bytes = base64.b64decode(str(body.get("pdf_base64", "")), validate=True)
+                except Exception:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": "A base64-encoded PDF is required."})
+                    return
+                filename = str(body.get("filename") or "document.pdf")
+                try:
+                    result = run_local_fix_semantics(
+                        filename, payload_bytes, checker,
+                        link_names=body.get("link_names"), alt_texts=body.get("alt_texts"),
+                    )
+                except (UploadValidationError, RemediationError, DerivationError) as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                except Exception as error:
+                    self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Local review could not complete: {type(error).__name__}"})
+                    return
+                record_fix_event(result)
+                self.send_json(HTTPStatus.OK, result)
+                return
+            if request_url.path == "/api/fix-structure":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    payload_bytes = base64.b64decode(str(body.get("pdf_base64", "")), validate=True)
+                except Exception:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": "A base64-encoded PDF is required."})
+                    return
+                filename = str(body.get("filename") or "document.pdf")
+                try:
+                    result = run_local_fix_structure(
+                        filename, payload_bytes, checker,
+                        confirmed_roles=body.get("confirmed_roles"),
+                        reading_order=body.get("reading_order"),
+                    )
+                except (UploadValidationError, RemediationError, DerivationError) as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                except Exception as error:
+                    self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Local review could not complete: {type(error).__name__}"})
+                    return
+                record_fix_event(result)
+                self.send_json(HTTPStatus.OK, result)
+                return
+            if request_url.path == "/api/fix-ocr":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    payload_bytes = base64.b64decode(str(body.get("pdf_base64", "")), validate=True)
+                except Exception:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": "A base64-encoded PDF is required."})
+                    return
+                filename = str(body.get("filename") or "document.pdf")
+                try:
+                    result = run_local_fix_ocr(filename, payload_bytes, checker)
+                except (UploadValidationError, RemediationError, DerivationError) as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                except Exception as error:
+                    self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Local review could not complete: {type(error).__name__}"})
+                    return
+                record_fix_event(result)
+                self.send_json(HTTPStatus.OK, result)
+                return
             if request_url.path == "/api/lesson-result":
                 body = self.read_json_body(length)
                 if body is None:
@@ -288,6 +426,63 @@ def create_server(
                     return
                 self.send_json(HTTPStatus.OK, IntelligenceGateway.egress_manifest(body.get("finding") or {}))
                 return
+            if request_url.path == "/api/ai/draft-alt":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                image_b64 = str(body.get("image_base64", ""))
+                context = str(body.get("context", ""))
+                if not body.get("consent"):
+                    self.send_json(HTTPStatus.OK, {"manifest": IntelligenceGateway.alt_draft_manifest(len(image_b64) * 3 // 4, context)})
+                    return
+                try:
+                    draft = intelligence.draft_alt_text(image_b64, str(body.get("mime", "image/jpeg")), context, consent=True)
+                except IntelligenceError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error), "fallback": "write_it_yourself"})
+                    return
+                self.send_json(HTTPStatus.OK, draft)
+                return
+            if request_url.path == "/api/ai/structure":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    payload_bytes = base64.b64decode(str(body.get("pdf_base64", "")), validate=True)
+                    blocks = derive_blocks(payload_bytes)
+                except Exception:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": "A readable base64-encoded PDF is required."})
+                    return
+                if not body.get("consent"):
+                    self.send_json(HTTPStatus.OK, {"manifest": IntelligenceGateway.structure_manifest(blocks)})
+                    return
+                try:
+                    proposal = intelligence.propose_structure(blocks, consent=True)
+                except IntelligenceError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error), "fallback": "structure_it_yourself"})
+                    return
+                self.send_json(HTTPStatus.OK, proposal)
+                return
+            if request_url.path == "/api/convert-structured":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    payload_bytes = base64.b64decode(str(body.get("pdf_base64", "")), validate=True)
+                except Exception:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": "A base64-encoded PDF is required."})
+                    return
+                try:
+                    payload = run_local_convert(str(body.get("filename") or "document.pdf"), payload_bytes,
+                                                roles=body.get("roles"))
+                except (UploadValidationError, DerivationError) as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                try:
+                    journey.record_activity("convert", payload.get("source_sha256"))
+                except Exception:
+                    pass
+                self.send_json(HTTPStatus.OK, payload)
+                return
             if request_url.path == "/api/ai/explain":
                 body = self.read_json_body(length)
                 if body is None:
@@ -304,6 +499,24 @@ def create_server(
                 self.send_json(HTTPStatus.OK, explanation)
                 return
 
+            if request_url.path == "/api/images":
+                if length <= 0 or length > MAX_PDF_BYTES:
+                    self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "PDF must be between 1 byte and 50 MB."})
+                    return
+                try:
+                    self.send_json(HTTPStatus.OK, {"images": extract_images(self.rfile.read(length))})
+                except DerivationError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
+            if request_url.path == "/api/blocks":
+                if length <= 0 or length > MAX_PDF_BYTES:
+                    self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "PDF must be between 1 byte and 50 MB."})
+                    return
+                try:
+                    self.send_json(HTTPStatus.OK, {"blocks": derive_blocks(self.rfile.read(length))})
+                except DerivationError as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
             if request_url.path not in {"/api/review", "/api/fix", "/api/convert"}:
                 self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                 return
