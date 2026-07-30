@@ -24,6 +24,7 @@ class ServiceSettings:
     session_secret: str | None
     hosted_controls: tuple[str, ...]
     allow_hosted_synthetic: bool = False
+    public_access: bool = False
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> "ServiceSettings":
@@ -40,6 +41,7 @@ class ServiceSettings:
             # Explicit opt-in only: the value must be exactly "true". Anything
             # else (unset, "1", "TRUE", "yes") keeps hosted intake closed.
             allow_hosted_synthetic=values.get("HUB_ALLOW_HOSTED_SYNTHETIC", "") == "true",
+            public_access=values.get("HUB_PUBLIC_ACCESS", "") == "true",
         )
 
     @property
