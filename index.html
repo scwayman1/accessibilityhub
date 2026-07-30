@@ -26,7 +26,7 @@
     .nav-links .nav-cta { color:var(--ink); background:var(--white); }.nav-cta:hover,.button.primary:hover { transform:translateY(-2px); background:#fff; }
     .hero { position:relative; isolation:isolate; min-height:min(900px,100svh); overflow:hidden; color:var(--white); background:#0b171d; }
     .hero::after { content:""; position:absolute; inset:0; z-index:-1; opacity:.11; pointer-events:none; background-image:radial-gradient(rgba(255,255,255,.55) .5px,transparent .7px); background-size:5px 5px; mix-blend-mode:soft-light; }
-    .hero-media { position:absolute; inset:0; z-index:-2; overflow:hidden; }
+    .hero-media { position:absolute; inset:0; z-index:-2; overflow:hidden; background:linear-gradient(115deg,#0b171d 0%,#12303c 48%,#1d4a5a 78%,#2a6070 100%); }
     .hero-media img { width:100%; height:100%; object-fit:cover; object-position:70% center; transform:scale(1.012); }
     .hero-media::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,rgba(5,13,17,.98) 0%,rgba(5,13,17,.90) 31%,rgba(5,13,17,.47) 54%,rgba(5,13,17,.05) 78%),linear-gradient(0deg,rgba(5,13,17,.58),transparent 38%); }
     .hero-grid { min-height:inherit; display:grid; grid-template-columns:minmax(0,540px) 1fr; align-items:center; padding:140px 0 80px; }
@@ -67,7 +67,7 @@
   </div></header>
   <main id="top">
     <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-media" aria-hidden="true"><img src="/assets/coastline-evidence-desk.png" alt=""></div>
+      <div class="hero-media"><img src="assets/coastline-evidence-desk.png" alt="An evidence desk by the coastline: printed course materials laid out for review in evening light" onerror="this.remove()"></div>
       <div class="shell hero-grid"><div>
         <p class="eyebrow">Coastline College Accessibility Hub</p>
         <h1 id="hero-title">Make course materials easier for <em>every student</em> to use.</h1>

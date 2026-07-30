@@ -76,8 +76,9 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def finding(category: str, rule_id: str, severity: str, location: str, evidence: str, next_action: str) -> dict[str, str]:
-    return {
+def finding(category: str, rule_id: str, severity: str, location: str, evidence: str, next_action: str,
+            pages: list[int] | None = None) -> dict[str, Any]:
+    item: dict[str, Any] = {
         "category": category,
         "rule_id": rule_id,
         "severity": severity,
@@ -85,6 +86,9 @@ def finding(category: str, rule_id: str, severity: str, location: str, evidence:
         "evidence": evidence,
         "next_action": next_action,
     }
+    if pages:
+        item["pages"] = sorted(set(pages))
+    return item
 
 
 def indirect(value: Any) -> Any:
@@ -204,6 +208,30 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     findings: list[dict[str, str]] = []
     strengths: list[dict[str, str]] = []
+    # Review areas this tool never gathers evidence about. Listing an area here
+    # is not a result in either direction — it routes the area to a human reviewer.
+    not_assessed: list[dict[str, str]] = [
+        {
+            "area": "visual contrast",
+            "reason": "This tool gathers no evidence about color contrast in the rendered document. "
+                      "Contrast review is routed to a human reviewer; nothing in this report speaks to it either way.",
+        },
+        {
+            "area": "table structure semantics",
+            "reason": "This tool does not evaluate whether tables carry correct header, scope, or reading-order semantics. "
+                      "Table review is routed to a human reviewer; nothing in this report speaks to it either way.",
+        },
+        {
+            "area": "form field labels",
+            "reason": "This tool does not inspect interactive form fields for labels or instructions. "
+                      "Form review is routed to a human reviewer; nothing in this report speaks to it either way.",
+        },
+        {
+            "area": "color-only meaning",
+            "reason": "This tool cannot detect whether meaning is conveyed by color alone. "
+                      "That judgement is routed to a human reviewer; nothing in this report speaks to it either way.",
+        },
+    ]
     qpdf = run(["qpdf", "--check", str(pdf)], timeout=60)
     if tool_missing(qpdf):
         findings.append(finding(
@@ -211,6 +239,11 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             "qpdf is not installed on this computer, so the structural integrity check did not run.",
             "Install qpdf to include structural integrity evidence in future reviews.",
         ))
+        not_assessed.append({
+            "area": "structural integrity (qpdf)",
+            "reason": "qpdf is not installed, so no structural integrity evidence was gathered for this document. "
+                      "This area is routed to a human reviewer until qpdf is available.",
+        })
     elif qpdf["returncode"] != 0:
         findings.append(finding(
             "blocking_technical_failure", "PDF.INTAKE.QPDF_CHECK", "high", "document",
@@ -308,14 +341,18 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "evidence": "A tagged structure tree exists. Whether the tags convey correct meaning still requires human review.",
             })
 
-        images = pages_without_text = 0
+        images = 0
+        pages_without_text: list[int] = []
+        image_pages: list[int] = []
         links: list[dict[str, Any]] = []
         for index, page in enumerate(reader.pages, start=1):
             text = (page.extract_text() or "").strip()
             if not text:
-                pages_without_text += 1
+                pages_without_text.append(index)
             image_count, page_links = count_page_objects(page)
             images += image_count
+            if image_count:
+                image_pages.append(index)
             for link in page_links:
                 links.append({"index": len(links), "page": index, **link})
         figures = iter_figures(indirect(root.get("/StructTreeRoot"))) if metadata["has_structure_tree"] else []
@@ -327,13 +364,14 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             "figure_elements": len(figures),
             "figures": [{"index": i, "has_alt": f["has_alt"]} for i, f in enumerate(figures)],
             "figures_missing_alt": figures_missing_alt,
-            "pages_without_extractable_text": pages_without_text,
+            "pages_without_extractable_text": len(pages_without_text),
         })
         if pages_without_text:
             findings.append(finding(
                 "review_required", "PDF.TEXT_LAYER", "high", "document pages",
-                f"{pages_without_text} of {len(reader.pages)} pages had no extractable text using pypdf.",
+                f"{len(pages_without_text)} of {len(reader.pages)} pages had no extractable text using pypdf.",
                 "Classify as scan/image-based or parser-limited; route for OCR assessment and human review.",
+                pages=pages_without_text,
             ))
         if figures_missing_alt:
             findings.append(finding(
@@ -353,6 +391,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 f"Detected {images} image XObject(s). This count does not determine whether alternatives are meaningful.",
                 "Review image purpose and text alternatives with a human reviewer."
                 + ("" if metadata["has_structure_tree"] else " This PDF has no tag structure, so alt text cannot be attached here — rebuild it as an accessible HTML working copy instead."),
+                pages=image_pages,
             ))
         unnamed_links = [link for link in links if not link["named"]]
         if unnamed_links:
@@ -360,6 +399,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "deterministic_defect", "PDF.LINKS.NAME", "medium", "link annotations",
                 f"{len(unnamed_links)} of {len(links)} link annotation(s) have no accessible description (/Contents).",
                 "Give each link a description of its destination; the fix is applied to a copy and rechecked.",
+                pages=[link["page"] for link in unnamed_links],
             ))
         elif links:
             strengths.append({
@@ -383,6 +423,11 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 (verapdf.get("stderr") or "The veraPDF validator did not run.").strip()[:1000],
                 "Make the pinned veraPDF image available locally to include UA-1 validator evidence in future reviews.",
             ))
+            not_assessed.append({
+                "area": "PDF/UA-1 validator (veraPDF)",
+                "reason": "The pinned veraPDF validator did not run, so no UA-1 validator evidence was gathered for this document. "
+                          "This area is routed to a human reviewer until the validator is available.",
+            })
         else:
             findings.append(finding(
                 "advisory", "PDF.VERAPDF.UA1", "info", "veraPDF report",
@@ -417,6 +462,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
         "metadata": metadata,
         "verapdf": verapdf,
         "findings": findings,
+        "not_assessed": not_assessed,
         "strengths": strengths,
         "strengths_note": "Verified strengths are individual pieces of machine evidence. They are never combined into an overall accessibility pass.",
         "claim_boundary": "Technical evidence and review routing only. No conformance, legal, publish-readiness, or end-user usability determination is produced.",
@@ -451,11 +497,19 @@ def markdown(report: dict[str, Any]) -> str:
             f"### {item['rule_id']} — {item['category']}",
             f"- Severity: {item['severity']}",
             f"- Location: {item['location']}",
+        ])
+        if item.get("pages"):
+            rows.append(f"- Pages: {', '.join(str(page) for page in item['pages'])}")
+        rows.extend([
             f"- Evidence: {item['evidence']}",
             f"- Next action: {item['next_action']}",
             "",
         ])
+    rows.extend(["## Not assessed by this tool", ""])
+    for item in report.get("not_assessed", []):
+        rows.append(f"- {item['area']}: {item['reason']}")
     rows.extend([
+        "",
         "## Raw validator artifact",
         "",
         f"- {report['verapdf']['report_path']}",

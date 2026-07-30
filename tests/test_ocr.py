@@ -44,6 +44,16 @@ def mixed_pdf() -> bytes:
     return out.getvalue()
 
 
+def two_scan_pdf() -> bytes:
+    """Two scan-like pages, both eligible for OCR."""
+    writer = PdfWriter()
+    writer.append(PdfReader(io.BytesIO(scan_pdf()), strict=False))
+    writer.append(PdfReader(io.BytesIO(scan_pdf()), strict=False))
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def rotated_scan_pdf() -> bytes:
     """The scan fixture with an explicit /Rotate 90 on its only page."""
     writer = PdfWriter(clone_from=PdfReader(io.BytesIO(scan_pdf()), strict=False))
@@ -131,6 +141,13 @@ class RealEngineTests(unittest.TestCase):
         self.assertEqual(report["contract_version"], "tina-remediation-report/v1")
         self.assertEqual(report["actions"][0]["pages_ocred"], 1)
         self.assertGreater(report["actions"][0]["words_applied"], 0)
+
+        words = report["actions"][0]["words"]
+        self.assertGreater(len(words), 0)
+        for entry in words:
+            self.assertEqual(entry["page"], 1)
+            self.assertIsInstance(entry["text"], str)
+            self.assertIsInstance(entry["conf"], float)
 
 
 class FakeRunnerTests(unittest.TestCase):
@@ -322,6 +339,70 @@ class FakeRunnerTests(unittest.TestCase):
         flattened = json.dumps(report, default=str).lower()
         for phrase in forbidden:
             self.assertNotIn(phrase, flattened)
+
+    def test_words_are_surfaced_for_review_with_pages_and_confidence(self):
+        pages_tsv = [
+            fake_tsv([(120, 200, 400, 50, 96.0, "Alpha"),
+                      (540, 200, 200, 50, 88.5, "Beta")]),
+            fake_tsv([(120, 200, 400, 50, 72.0, "Gamma")]),
+        ]
+        calls = []
+        def runner(image_bytes):
+            calls.append(image_bytes)
+            return pages_tsv[len(calls) - 1]
+        engine = OcrRemediation.with_builtin_tools(tesseract_runner=runner)
+        _, report = engine.apply("two-scans.pdf", two_scan_pdf())
+
+        action = report["actions"][0]
+        self.assertEqual(action["words"], [
+            {"page": 1, "text": "Alpha", "conf": 96.0},
+            {"page": 1, "text": "Beta", "conf": 88.5},
+            {"page": 2, "text": "Gamma", "conf": 72.0},
+        ])
+        self.assertFalse(action["words_truncated"])
+        import json
+        json.dumps(action["words"])  # must be JSON-safe
+
+    def test_dropped_words_do_not_appear_in_the_review_list(self):
+        runner = lambda image_bytes: fake_tsv([
+            (120, 200, 400, 50, 96.0, "Kept"),
+            (120, 400, 400, 50, 10.0, "Ghost"),   # below the confidence floor
+            (540, 200, 200, 50, 96.0, "€42"),     # non latin-1 encodable
+        ])
+        engine = OcrRemediation.with_builtin_tools(tesseract_runner=runner)
+        _, report = engine.apply("scan.pdf", scan_pdf())
+        action = report["actions"][0]
+        surfaced = [entry["text"] for entry in action["words"]]
+        self.assertEqual(surfaced, ["Kept"])
+        self.assertNotIn("Ghost", surfaced)
+        self.assertNotIn("€42", surfaced)
+        self.assertFalse(action["words_truncated"])
+
+    def test_words_list_is_capped_at_400_with_truncation_flag(self):
+        rows = [(10 + (i % 50) * 25, 10 + (i // 50) * 30, 20, 20, 90.0, f"w{i}")
+                for i in range(450)]
+        engine = OcrRemediation.with_builtin_tools(
+            tesseract_runner=lambda b: fake_tsv(rows)
+        )
+        _, report = engine.apply("scan.pdf", scan_pdf())
+        action = report["actions"][0]
+        self.assertEqual(action["words_applied"], 450)
+        self.assertEqual(len(action["words"]), 400)
+        self.assertTrue(action["words_truncated"])
+        # The cap keeps the first words in reading order, not an arbitrary slice.
+        self.assertEqual(action["words"][0]["text"], "w0")
+        self.assertEqual(action["words"][399]["text"], "w399")
+
+    def test_words_list_of_exactly_400_is_not_flagged_truncated(self):
+        rows = [(10 + (i % 50) * 25, 10 + (i // 50) * 30, 20, 20, 90.0, f"w{i}")
+                for i in range(400)]
+        engine = OcrRemediation.with_builtin_tools(
+            tesseract_runner=lambda b: fake_tsv(rows)
+        )
+        _, report = engine.apply("scan.pdf", scan_pdf())
+        action = report["actions"][0]
+        self.assertEqual(len(action["words"]), 400)
+        self.assertFalse(action["words_truncated"])
 
     def test_non_latin1_words_are_dropped_and_counted_not_mangled(self):
         runner = lambda image_bytes: fake_tsv([
