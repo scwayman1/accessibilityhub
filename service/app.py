@@ -147,7 +147,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 cookie = f"hub_session={_session_token(settings)}; HttpOnly; SameSite=Lax; Path=/" + ("; Secure" if settings.environment == "staging" else "")
                 return _redirect(start_response, "/app", [("Set-Cookie", cookie)])
             return _response(start_response, "401 Unauthorized", _html_page("Sign in — Accessibility Hub", "<main><div class=login><section class=locked><h2>That code did not open the workspace.</h2><p><a href=\"/login\">Try again</a></p></section></div></main>"))
-        if not _authenticated(environ, settings):
+        if not settings.public_access and not _authenticated(environ, settings):
             return _redirect(start_response, "/login")
         if path in {"/", "/app"} and method == "GET":
             documents = repository.list_documents(TENANT_ID)
