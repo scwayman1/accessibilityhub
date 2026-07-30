@@ -32,15 +32,27 @@ Render does not provide a private object store or a malware verdict service. Pro
 
 Use Clerk for the real-intake web API only.
 
+The exact dashboard sequence, environment contract, JWT checks, invitation
+hold, user-ID binding, activation, and revocation steps are maintained in
+[Clerk owner-only setup](clerk-owner-only-setup.md).
+
 Required Render secrets:
 
 - `CLERK_PUBLISHABLE_KEY`
-- `CLERK_SECRET_KEY` or a Clerk JWT verification public key
+- `CLERK_JWT_KEY` containing the Clerk PEM JWT public key
 - `CLERK_ISSUER`
-- `CLERK_AUTHORIZED_PARTY` for the final HTTPS origin
+- `CLERK_AUTHORIZED_PARTY`, exactly
+  `https://accessibility.coastlinecollegefoundation.com`
 - `HUB_OWNER_CLERK_USER_ID`
 
-The API must verify Clerk session tokens server-side on every real-document request, reject expired or invalid tokens, verify the issuer and authorized party, then require the token subject to equal `HUB_OWNER_CLERK_USER_ID`. After Clerk is configured, invite `scott@coastlinecollegefoundation.com` as the sole owner, then record the resulting Clerk user ID as the owner secret. Do not use an email comparison as the authorization control.
+The API verifies Clerk session tokens networklessly with the public key on every
+real-document request, rejects expired or invalid tokens, verifies the issuer
+and authorized party, then requires the token subject to equal
+`HUB_OWNER_CLERK_USER_ID`. A privileged Clerk secret key is not required for
+request authentication. After every other control is ready, invite
+`scott@coastlinecollegefoundation.com` as the sole owner, then store the
+resulting Clerk user ID as the owner secret. Do not use an email comparison as
+the authorization control.
 
 ## Required document lifecycle
 
