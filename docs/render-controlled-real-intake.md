@@ -40,7 +40,7 @@ Required Render secrets:
 - `CLERK_AUTHORIZED_PARTY` for the final HTTPS origin
 - `HUB_OWNER_CLERK_USER_ID`
 
-The API must verify Clerk session tokens server-side on every real-document request, reject expired or invalid tokens, verify the issuer and authorized party, then require the token subject to equal `HUB_OWNER_CLERK_USER_ID`. Configure a Clerk invitation for Scott's verified Coastline College Foundation email, then record the resulting Clerk user ID as the owner secret. The exact email address is not stored in this repository. Do not use an email comparison as the authorization control.
+The API must verify Clerk session tokens server-side on every real-document request, reject expired or invalid tokens, verify the issuer and authorized party, then require the token subject to equal `HUB_OWNER_CLERK_USER_ID`. After Clerk is configured, invite `scott@coastlinecollegefoundation.com` as the sole owner, then record the resulting Clerk user ID as the owner secret. Do not use an email comparison as the authorization control.
 
 ## Required document lifecycle
 
@@ -53,7 +53,7 @@ The API must verify Clerk session tokens server-side on every real-document requ
 
 ## Incident ownership
 
-Scott Wayman is the incident owner for this controlled test environment. The audit and incident procedure must use his verified Coastline College Foundation identity after Clerk is configured. This does not replace the need for a documented contact path and an access-revocation procedure.
+Scott Wayman (`scott@coastlinecollegefoundation.com`) is the incident owner for this controlled test environment. The audit and incident procedure must use this verified Clerk identity after Clerk is configured. This does not replace the need for a documented contact path and an access-revocation procedure.
 
 ## Activation gate
 
