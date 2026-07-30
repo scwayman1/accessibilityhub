@@ -13,6 +13,11 @@ services:
         sync: false
       - key: HUB_SESSION_SECRET
         sync: false
+      # Dashboard-managed opt-in. Only the exact value "true" opens the
+      # bundled-synthetic-fixture route in hosted staging; leave unset to keep
+      # hosted document creation closed. It never enables uploads or real intake.
+      - key: HUB_ALLOW_HOSTED_SYNTHETIC
+        sync: false
       - key: HUB_PRIVATE_OBJECT_STORAGE
         sync: false
       - key: HUB_MALWARE_SCAN_GATE

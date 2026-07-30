@@ -161,6 +161,53 @@ tests in `tests/test_fixlab.py` (5 new); 177 total. Browser-verified: an
 untagged three-block PDF gained a verified structure tree from confirmed
 roles, and a scanned page's extractable-text finding resolved after OCR.
 
+## UI-debt + hosted-testing storm (2026-07-30)
+
+A second agent storm (7 agents: 3 engine, 2 UI sequential, 2 adversaries)
+driven by a live product-render review of the merged build:
+
+- **The report points at the document and admits its limits
+  (`check_pdf.py`):** every report now carries `not_assessed` — visual
+  contrast, table structure semantics, form field labels, color-only
+  meaning, plus dynamic entries when qpdf/veraPDF are unavailable — and
+  findings gain `pages` anchors (which pages lack text, hold unnamed links,
+  contain images).
+- **Findings UX debt paid (`local_reviewer.html`):** document findings
+  sorted by actionability and counted honestly ("N items in this
+  document"); tool limitations and the not-assessed lanes live in a
+  collapsed "Review completeness" strip instead of leading the page; the
+  first *document* finding is auto-selected.
+- **Engine capabilities finally surfaced:** the tag-tree builder gained
+  accessible Up/Down **reading-order** controls (the engine validated
+  permutations since the first storm; the UI never exposed them), and the
+  OCR fix now shows a **"Review the recognized text"** panel — words per
+  page with low-confidence highlighting — so the human review the claim
+  boundary requires is actually possible in place. `tina/ocr.py` reports
+  the applied words (capped at 400, truncation disclosed).
+- **Design convergence:** the workbench adopted the staging shell's design
+  system — navy header, porcelain surfaces, serif display headings, copper
+  repair emphasis, the four-lane chip language (Needs attention / Review
+  recommended / Verified signal / Not assessed), and the Add material →
+  Review → Improve → Check again path rail. One product, two deployment
+  modes. The landing hero's dead image region was fixed with a graceful
+  fallback.
+- **Hosted testing path (`service/`):** a new explicit
+  `HUB_ALLOW_HOSTED_SYNTHETIC` opt-in (byte-exact `"true"` only) lets the
+  Render-deployed staging service run the bundled synthetic-handout flow
+  hosted — access-code gated, audit-recorded, still zero upload routes;
+  the queued-assessment page now genuinely auto-refreshes (the old inline
+  script was silently blocked by the page's own CSP); the doc gained a
+  click-by-click Render runbook.
+- **Adversaries found and fixed:** a stale detail panel on reports with no
+  document findings, a cross-document output-chip leak in
+  `resetDocumentState`, and a request-handler crash on malformed
+  Content-Length in the staging service. Every hosted-boundary probe held:
+  no upload path exists with or without the flag, flag-value strictness
+  verified against 15+ variants, secrets never leak into HTML/logs/healthz.
+
+Tests: 240 total (was 185). Browser-verified before/after across the
+workbench, landing, and staging surfaces.
+
 ## Phase status at a glance
 
 | PRD phase | Status |

@@ -23,6 +23,7 @@ class ServiceSettings:
     access_code: str | None
     session_secret: str | None
     hosted_controls: tuple[str, ...]
+    allow_hosted_synthetic: bool = False
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> "ServiceSettings":
@@ -36,6 +37,9 @@ class ServiceSettings:
             access_code=values.get("HUB_STAGING_ACCESS_CODE"),
             session_secret=values.get("HUB_SESSION_SECRET"),
             hosted_controls=tuple(name for name in HOSTED_CONTROL_VARS if values.get(name)),
+            # Explicit opt-in only: the value must be exactly "true". Anything
+            # else (unset, "1", "TRUE", "yes") keeps hosted intake closed.
+            allow_hosted_synthetic=values.get("HUB_ALLOW_HOSTED_SYNTHETIC", "") == "true",
         )
 
     @property
@@ -48,8 +52,17 @@ class ServiceSettings:
 
     @property
     def synthetic_intake_ready(self) -> bool:
-        """Only the local synthetic slice is executable until hosted adapters exist."""
-        return self.login_ready and self.environment == "development"
+        """Bundled-fixture intake runs locally, or hosted only behind the explicit opt-in.
+
+        Real-document intake is a separate boundary: it stays closed in hosted
+        mode regardless of this property until the six control references have
+        working, independently validated adapters.
+        """
+        if not self.login_ready:
+            return False
+        if self.environment == "development":
+            return True
+        return self.environment == "staging" and self.allow_hosted_synthetic
 
     def health_payload(self) -> dict[str, object]:
         return {
@@ -61,5 +74,6 @@ class ServiceSettings:
             "synthetic_intake_ready": self.synthetic_intake_ready,
             "hosted_boundary_ready": self.hosted_boundary_ready,
             "hosted_intake_enabled": False,
+            "hosted_synthetic_optin": self.allow_hosted_synthetic,
             "configured_hosted_controls": list(self.hosted_controls),
         }

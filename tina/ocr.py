@@ -27,6 +27,7 @@ from tina.remedy import RemediationError
 REMEDIATE_OCR_PERMISSION = "document.remediate.ocr"
 CONFIDENCE_FLOOR = 40.0
 TESSERACT_TIMEOUT_SECONDS = 120
+WORDS_REPORT_CAP = 400
 
 TesseractRunner = Callable[[bytes], str]
 
@@ -230,6 +231,8 @@ def _apply_text_layer(input_data: dict[str, Any], runner: TesseractRunner) -> di
     words_applied = 0
     confidences: list[float] = []
     dropped_non_encodable = 0
+    report_words: list[dict[str, Any]] = []
+    words_truncated = False
 
     for index in eligible:
         page = writer.pages[index]
@@ -270,6 +273,15 @@ def _apply_text_layer(input_data: dict[str, Any], runner: TesseractRunner) -> di
         ocred_indexes.add(index)
         words_applied += len(kept)
         confidences.extend(word["conf"] for word in kept)
+        for word in kept:  # reading order per page: TSV order is preserved
+            if len(report_words) >= WORDS_REPORT_CAP:
+                words_truncated = True
+                break
+            report_words.append({
+                "page": index + 1,
+                "text": word["text"],
+                "conf": word["conf"],
+            })
 
     if not ocred_indexes:
         raise RemediationError(
@@ -292,6 +304,8 @@ def _apply_text_layer(input_data: dict[str, Any], runner: TesseractRunner) -> di
         "pages_skipped": skipped,
         "words_applied": words_applied,
         "words_dropped_non_encodable": dropped_non_encodable,
+        "words": report_words,
+        "words_truncated": words_truncated,
         "mean_confidence": round(sum(confidences) / len(confidences), 1),
         "confidence_floor": CONFIDENCE_FLOOR,
         "note": HUMAN_REVIEW_NOTE,

@@ -41,7 +41,7 @@ def _workflow_rail(current: str) -> str:
     return f"<nav class=workflow-rail aria-label=\"Workspace rhythm\"><ol>{items}</ol></nav>"
 
 
-def _html_page(title: str, body: str) -> bytes:
+def _html_page(title: str, body: str, head: str = "") -> bytes:
     css = """
     :root { --navy:#003764; --ink:#081922; --ink-soft:#123143; --porcelain:#f7f3eb; --paper:#fffdf8; --line:#d7dedb; --sky:#6bc4e8; --blue:#3cb4e5; --ocean:#006f8f; --copper:#af7653; --muted:#5a7078; --success:#276a55; --attention:#a65329; }
     * { box-sizing:border-box } body { margin:0; color:var(--ink); background:var(--porcelain); font:15px/1.55 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; } a { color:inherit } :focus-visible { outline:3px solid var(--sky); outline-offset:3px } .shell { width:min(1240px,calc(100% - 48px)); margin:auto; }
@@ -57,7 +57,7 @@ def _html_page(title: str, body: str) -> bytes:
     .fixlab { margin-top:21px; padding:19px; border-top:3px solid var(--copper); background:#f8eee6; } .fixlab > p { margin-bottom:5px } .fixlab details { background:#fffaf4 } .rail .fixlab { color:var(--ink); background:#f8eee6 } .rail .fixlab .eyebrow { color:#8a5031 } .rail .fixlab h2,.rail .fixlab p { color:var(--ink) } .locked { padding:24px; border-left:4px solid var(--copper); background:#fff4e5 } .login { width:min(470px,100%); margin:42px auto } .login .panel { padding:32px; }
     @media(max-width:800px) { .shell { width:min(100% - 30px,1240px) } nav { min-height:66px } .brand { width:165px } .workflow-rail { overflow:auto } .workspace { grid-template-columns:1fr } .hero { padding:30px } .signal { grid-template-columns:1fr; gap:9px } .nav-note { display:none } }
     """
-    return f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{escape(title)}</title><style>{css}</style></head><body><header><div class=\"shell\"><nav><a class=\"brand\" href=\"/app\"><img src=\"/assets/coastline-college-logo-white.png\" alt=\"Coastline College\"></a><span class=\"nav-note\">Accessibility Hub</span></nav></div></header>{body}</body></html>""".encode()
+    return f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{escape(title)}</title>{head}<style>{css}</style></head><body><header><div class=\"shell\"><nav><a class=\"brand\" href=\"/app\"><img src=\"/assets/coastline-college-logo-white.png\" alt=\"Coastline College\"></a><span class=\"nav-note\">Accessibility Hub</span></nav></div></header>{body}</body></html>""".encode()
 
 
 def _session_token(settings: ServiceSettings) -> str:
@@ -92,14 +92,22 @@ def _redirect(start_response: Callable, location: str, headers: list[tuple[str, 
 
 
 def _form(environ: dict[str, Any]) -> dict[str, str]:
-    size = min(int(environ.get("CONTENT_LENGTH") or 0), 50_000)
+    # A malformed or hostile Content-Length must not crash the handler or defeat
+    # the read cap. Clamp to [0, 50_000]; a non-integer header reads nothing.
+    try:
+        declared = int(environ.get("CONTENT_LENGTH") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    size = min(max(declared, 0), 50_000)
     values = parse_qs(environ["wsgi.input"].read(size).decode("utf-8", "replace"))
     return {key: value[-1] for key, value in values.items()}
 
 
-def _signals(result: dict[str, Any] | None) -> str:
+def _signals(result: dict[str, Any] | None, job_state: str = "queued") -> str:
     if not result:
-        return "<p class=\"small\">Assessment is queued. This page refreshes while it runs.</p><script>setTimeout(()=>location.reload(),700)</script>"
+        if job_state == "failed":
+            return "<p class=\"small\">This assessment did not complete, so no signals are shown. The document record is unchanged. Remove this record and start a new synthetic review, or check the service logs for the recorded error code.</p>"
+        return "<p class=\"small\">Assessment is queued. This page refreshes automatically while it runs.</p>"
     cards = []
     for signal in result.get("signals", []):
         lane = signal["lane"]
@@ -171,12 +179,16 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             if len(pieces) == 2 and method == "GET":
                 job = repository.latest_job(TENANT_ID, document_id)
                 result = job.get("result") if job else None
+                job_state = job["state"] if job else "queued"
+                # Vanilla auto-refresh while the assessment runs; the page stops
+                # refreshing once the job reaches a terminal state.
+                refresh_head = "<meta http-equiv=\"refresh\" content=\"2\">" if job_state in {"queued", "running"} else ""
                 remediation_rows = repository.remediations(TENANT_ID, document_id)
                 provenance = "".join(f"<li><strong>{escape(r['kind'])}</strong> · {escape(r['created_at'][:19])}</li>" for r in remediation_rows) or "<li>No recheck has been applied to this version.</li>"
                 cleanup = f"<details><summary>Remove this synthetic record</summary><p>This removes this version and any rechecked copies from the local staging store.</p><form method=post action=\"/documents/{escape(document_id)}/delete\"><label><input type=checkbox name=confirmed value=yes required> I want to remove these synthetic records.</label><div class=actions><button class=secondary>Remove records</button></div></form></details>"
                 ocr_action = f"<details><summary>Add a text layer from this scan</summary><p>Review the generated text against the scan before relying on it.</p><form method=post action=\"/documents/{escape(document_id)}/remediate/ocr\"><label><input type=checkbox name=confirmed value=yes required> I will review the generated text against the page image.</label><div class=actions><button class=secondary>Apply text layer and recheck</button></div></form></details>" if "scanned" in document["filename"] else ""
-                body = f"<main><div class=shell><p class=eyebrow><a href=\"/app\">Workspace</a> / document</p><h1>{escape(document['filename'])}</h1><p class=lead>Read each signal, decide what to improve, and check the new version without losing the record of what changed.</p>{_workflow_rail('review')}<section class=workspace><aside class=\"panel rail\"><p class=eyebrow>Document record</p><h2>Assessment {escape(job['state'] if job else 'queued')}</h2><div class=meta><span class=tag>{escape(document['source_kind'])}</span><span>{escape(document['sha256'][:16])}…</span></div><section class=fixlab><p class=eyebrow>3 · Improve</p><h2>Fix Lab</h2><p>Apply a change, then check the new version.</p><details open><summary>Update title and language</summary><form method=post action=\"/documents/{escape(document_id)}/remediate/metadata\"><label>Document title</label><input name=title value=\"Week 3 Course Handout\" required><label>Primary language</label><input name=language value=\"en-US\" required><div class=actions><button>Apply and recheck</button></div></form></details><details><summary>Build tags from your confirmed structure</summary><p>Confirm roles and reading order before this copy is changed.</p><form method=post action=\"/documents/{escape(document_id)}/remediate/structure\"><label>Confirmed roles (JSON)</label><textarea name=roles>{{\"0\":\"h1\",\"1\":\"p\"}}</textarea><label>Confirmed reading order (JSON)</label><textarea name=order>[0,1,2,3,4,5]</textarea><label><input type=checkbox name=confirmed value=yes required> I confirm these roles and this reading order.</label><div class=actions><button class=secondary>Build tags and recheck</button></div></form></details>{ocr_action}{cleanup}</section><p class=small>Each recheck creates a new version and keeps the source record intact.</p></aside><section class=panel><p class=eyebrow>2 · Review</p><h2>Signals and next actions</h2>{_signals(result)}<div class=details><details><summary>4 · Check again — remediation provenance</summary><ul class=queue>{provenance}</ul></details></div></section></section></div></main>"
-                return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", body))
+                body = f"<main><div class=shell><p class=eyebrow><a href=\"/app\">Workspace</a> / document</p><h1>{escape(document['filename'])}</h1><p class=lead>Read each signal, decide what to improve, and check the new version without losing the record of what changed.</p>{_workflow_rail('review')}<section class=workspace><aside class=\"panel rail\"><p class=eyebrow>Document record</p><h2>Assessment {escape(job['state'] if job else 'queued')}</h2><div class=meta><span class=tag>{escape(document['source_kind'])}</span><span>{escape(document['sha256'][:16])}…</span></div><section class=fixlab><p class=eyebrow>3 · Improve</p><h2>Fix Lab</h2><p>Apply a change, then check the new version.</p><details open><summary>Update title and language</summary><form method=post action=\"/documents/{escape(document_id)}/remediate/metadata\"><label>Document title</label><input name=title value=\"Week 3 Course Handout\" required><label>Primary language</label><input name=language value=\"en-US\" required><div class=actions><button>Apply and recheck</button></div></form></details><details><summary>Build tags from your confirmed structure</summary><p>Confirm roles and reading order before this copy is changed.</p><form method=post action=\"/documents/{escape(document_id)}/remediate/structure\"><label>Confirmed roles (JSON)</label><textarea name=roles>{{\"0\":\"h1\",\"1\":\"p\"}}</textarea><label>Confirmed reading order (JSON)</label><textarea name=order>[0,1,2,3,4,5]</textarea><label><input type=checkbox name=confirmed value=yes required> I confirm these roles and this reading order.</label><div class=actions><button class=secondary>Build tags and recheck</button></div></form></details>{ocr_action}{cleanup}</section><p class=small>Each recheck creates a new version and keeps the source record intact.</p></aside><section class=panel><p class=eyebrow>2 · Review</p><h2>Signals and next actions</h2>{_signals(result, job_state)}<div class=details><details><summary>4 · Check again — remediation provenance</summary><ul class=queue>{provenance}</ul></details></div></section></section></div></main>"
+                return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", body, refresh_head))
             if len(pieces) == 3 and pieces[2] == "delete" and method == "POST":
                 if _form(environ).get("confirmed") != "yes":
                     return _response(start_response, "400 Bad Request", _html_page("Removal needs confirmation", f"<main><div class=shell><section class=locked><h2>This record is still here.</h2><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div></main>"))
