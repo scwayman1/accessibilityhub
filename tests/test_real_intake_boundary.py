@@ -222,6 +222,18 @@ class RealIntakeConfigurationTests(unittest.TestCase):
             "runtime_evidence_timestamp_in_future", future.blockers_at(now)
         )
 
+    def test_runtime_evidence_must_match_configured_verification_run(self):
+        evidence = all_runtime_evidence()
+        settings = RealIntakeSettings.from_environ(
+            complete_environment(
+                HUB_REAL_INTAKE_VERIFICATION_ID="different-run-id"
+            )
+        )
+        self.assertIn(
+            "runtime_verification_id_mismatch",
+            settings.activation_blockers(evidence),
+        )
+
 
 class OwnerAuthenticationTests(unittest.TestCase):
     def setUp(self):
@@ -262,6 +274,27 @@ class OwnerAuthenticationTests(unittest.TestCase):
             self.authenticate(claims(sts="pending"))
         self.assertEqual(captured.exception.code, "session_tasks_incomplete")
 
+    def test_impersonated_and_organization_sessions_fail_closed(self):
+        for claim, value, code in (
+            (
+                "act",
+                {
+                    "iss": "https://dashboard.clerk.com",
+                    "sid": "sess_impersonated",
+                    "sub": OTHER_ID,
+                },
+                "impersonated_session_rejected",
+            ),
+            (
+                "o",
+                {"id": "org_unexpected", "rol": "admin"},
+                "organization_session_rejected",
+            ),
+        ):
+            with self.assertRaises(AuthenticationFailure) as captured:
+                self.authenticate(claims(**{claim: value}))
+            self.assertEqual(captured.exception.code, code)
+
     def test_near_miss_bearer_headers_are_rejected(self):
         authenticator = OwnerAuthenticator(
             self.settings, decoder=lambda _token, _key, _issuer: claims()
@@ -276,6 +309,19 @@ class OwnerAuthenticationTests(unittest.TestCase):
         ):
             with self.assertRaises(AuthenticationFailure, msg=header):
                 authenticator.authenticate({"HTTP_AUTHORIZATION": header})
+
+    def test_malformed_claim_shapes_fail_closed(self):
+        malformed = (
+            {"jti": True},
+            {"sid": ["sess_test"]},
+            {"azp": {"origin": ORIGIN}},
+            {"exp": True},
+            {"iat": "1900000000"},
+            {"nbf": None},
+        )
+        for overrides in malformed:
+            with self.assertRaises(AuthenticationFailure, msg=overrides):
+                self.authenticate(claims(**overrides))
 
 
 class ClerkJwtCryptographicVerificationTests(unittest.TestCase):
@@ -448,6 +494,27 @@ class LockedControlPlaneTests(unittest.TestCase):
             self.assertTrue(status.startswith("404"), (host, proto))
             self.assertEqual(payload["error"], "not_found")
 
+    def test_every_non_health_route_requires_the_private_https_origin(self):
+        settings = RealIntakeSettings.from_environ(complete_environment())
+        app = create_app(settings)
+        for path in ("/", "/future-route", "/owner/session"):
+            captured = {}
+
+            def start_response(status, _headers):
+                captured["status"] = status
+
+            app(
+                {
+                    "REQUEST_METHOD": "GET",
+                    "PATH_INFO": path,
+                    "HTTP_HOST": "preview.onrender.com",
+                    "HTTP_X_FORWARDED_PROTO": "https",
+                    "wsgi.input": io.BytesIO(),
+                },
+                start_response,
+            )
+            self.assertTrue(captured["status"].startswith("404"), path)
+
     def test_owner_probe_returns_only_bound_user_id(self):
         settings = RealIntakeSettings.from_environ(complete_environment())
         authenticator = OwnerAuthenticator(
@@ -567,6 +634,39 @@ class UploadGateTests(unittest.TestCase):
             },
         )
 
+    def test_malformed_evidence_types_fail_closed(self):
+        malformed_structure = StructuralEvidence(
+            parser_completed=True,
+            page_count=True,
+            stream_count=False,
+            expanded_stream_bytes=False,
+        )
+        decision = release_decision(
+            self.item, self.scan, malformed_structure
+        )
+        self.assertFalse(decision.eligible_for_processing)
+        self.assertEqual(
+            set(decision.reasons),
+            {
+                "page_limit_rejected",
+                "stream_count_rejected",
+                "expanded_stream_limit_rejected",
+            },
+        )
+        malformed_scan = ScanEvidence(
+            verdict="clean",
+            definitions_age_seconds=True,
+            engine_version=["clamav"],
+            signature_database_version=" test-db",
+        )
+        decision = release_decision(
+            self.item, malformed_scan, self.structure
+        )
+        self.assertFalse(decision.eligible_for_processing)
+        self.assertIn("scan_indeterminate", decision.reasons)
+        self.assertIn("scan_definitions_stale", decision.reasons)
+        self.assertIn("scan_identity_missing", decision.reasons)
+
 
 class AuditBoundaryTests(unittest.TestCase):
     def test_verified_owner_and_allowlisted_metadata_create_event(self):
@@ -626,6 +726,8 @@ class AuditBoundaryTests(unittest.TestCase):
             {"ocr_text": "private words"},
             {"signed_url": "https://storage.invalid/private"},
             {"engine_version": "https://unexpected.invalid"},
+            {"engine_version": " https://unexpected.invalid"},
+            {"engine_version": "test\nprivate"},
             {"engine_version": "x" * 257},
         )
         for detail in unsafe_details:
@@ -670,6 +772,11 @@ class DeploymentSeparationTests(unittest.TestCase):
         ):
             self.assertIn(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY", schema)
         self.assertIn("BEFORE UPDATE OR DELETE ON real_audit_events", schema)
+        self.assertIn("BEFORE TRUNCATE ON real_audit_events", schema)
+        self.assertIn(
+            "BEFORE UPDATE OR DELETE ON real_deletion_requests", schema
+        )
+        self.assertIn("verified real deletion tombstone is immutable", schema)
         self.assertIn("actor_clerk_user_id = owner_clerk_user_id", schema)
         self.assertIn("consume_real_upload_authorization", schema)
         self.assertIn("AND consumed_at IS NULL", schema)

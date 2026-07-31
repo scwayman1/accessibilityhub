@@ -20,7 +20,7 @@ projects:
             plan: starter
             region: oregon
             repo: https://github.com/scwayman1/accessibilityhub
-            branch: codex/controlled-real-intake-foundation
+            branch: main
             autoDeployTrigger: "off"
             buildCommand: pip install -r requirements-real-intake.txt
             preDeployCommand: python -m service.real_intake.deploy_check
@@ -96,7 +96,7 @@ projects:
             plan: starter
             region: oregon
             repo: https://github.com/scwayman1/accessibilityhub
-            branch: codex/controlled-real-intake-foundation
+            branch: main
             autoDeployTrigger: "off"
             buildCommand: pip install -r requirements-real-intake.txt
             preDeployCommand: python -m service.real_intake.deploy_check
@@ -115,43 +115,13 @@ projects:
                 value: "false"
               - key: HUB_MODEL_EGRESS_ENABLED
                 value: "false"
-              - key: HUB_POSTGRES_PRIVATE_URL
-                fromDatabase:
-                  name: accessibility-hub-real-metadata
-                  property: connectionString
-              - key: HUB_QUEUE_PRIVATE_URL
-                fromService:
-                  type: keyvalue
-                  name: accessibility-hub-real-queue
-                  property: connectionString
-              - key: HUB_AUDIT_SINK
-                fromDatabase:
-                  name: accessibility-hub-real-audit
-                  property: connectionString
-              - key: HUB_LIFECYCLE_POLICY_ID
-                value: manual-owner-deletion-only
-              - key: HUB_OBJECT_STORAGE_ENDPOINT
-                sync: false
-              - key: HUB_OBJECT_STORAGE_BUCKET
-                sync: false
-              - key: HUB_OBJECT_STORAGE_ACCESS_KEY_ID
-                sync: false
-              - key: HUB_OBJECT_STORAGE_SECRET_ACCESS_KEY
-                sync: false
-              - key: HUB_WORKER_ISOLATION_ATTESTATION
-                sync: false
-              - key: HUB_BACKUP_DELETION_SLA
-                sync: false
-              - key: HUB_REAL_INTAKE_VERIFICATION_ID
-                sync: false
-
           - type: pserv
             name: accessibility-hub-clamav
             runtime: docker
             plan: pro
             region: oregon
             repo: https://github.com/scwayman1/accessibilityhub
-            branch: codex/controlled-real-intake-foundation
+            branch: main
             autoDeployTrigger: "off"
             dockerfilePath: ./deploy/clamav/Dockerfile
             dockerContext: .

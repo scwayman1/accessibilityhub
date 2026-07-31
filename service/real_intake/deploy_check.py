@@ -17,6 +17,36 @@ class LockedDeployViolation(RuntimeError):
     pass
 
 
+PRIVATE_BLUEPRINT_REQUIRED = (
+    'generation: "off"',
+    "Coastline Accessibility Hub Private Real Intake",
+    "isolation: enabled",
+    "protection: enabled",
+    'autoDeployTrigger: "off"',
+    "maintenanceMode:",
+    "enabled: true",
+    "renderSubdomainPolicy: disabled",
+    "accessibility.coastlinecollegefoundation.com",
+    "python -m service.real_intake.deploy_check",
+    "python -m service.real_intake.locked_worker",
+    "HUB_REAL_DOCUMENT_INTAKE",
+    'value: "false"',
+    "HUB_BYOK_MODEL_ENABLED",
+    "HUB_MODEL_EGRESS_ENABLED",
+)
+
+WORKER_FORBIDDEN_CAPABILITIES = (
+    "HUB_POSTGRES_PRIVATE_URL",
+    "HUB_QUEUE_PRIVATE_URL",
+    "HUB_OBJECT_STORAGE_ENDPOINT",
+    "HUB_OBJECT_STORAGE_BUCKET",
+    "HUB_OBJECT_STORAGE_ACCESS_KEY_ID",
+    "HUB_OBJECT_STORAGE_SECRET_ACCESS_KEY",
+    "HUB_CLAMAV_PRIVATE_ENDPOINT",
+    "HUB_AUDIT_SINK",
+)
+
+
 def verify_locked_deploy(
     environ: Mapping[str, str] | None = None,
     *,
@@ -61,6 +91,30 @@ def verify_locked_deploy(
         if prohibited in public_blueprint:
             problems.append("public_blueprint_boundary_changed")
             break
+
+    private_blueprint = (root / "render.real-intake.yaml").read_text(
+        encoding="utf-8"
+    )
+    if any(
+        required not in private_blueprint
+        for required in PRIVATE_BLUEPRINT_REQUIRED
+    ):
+        problems.append("private_blueprint_lock_missing")
+    if private_blueprint.count("branch: main") != 3:
+        problems.append("private_blueprint_not_pinned_to_main")
+    if "codex/controlled-real-intake-foundation" in private_blueprint:
+        problems.append("private_blueprint_feature_branch_present")
+
+    worker_marker = "          - type: worker\n"
+    scanner_marker = "          - type: pserv\n"
+    if worker_marker not in private_blueprint or scanner_marker not in private_blueprint:
+        problems.append("private_blueprint_topology_missing")
+    else:
+        worker_block = private_blueprint.split(worker_marker, 1)[1].split(
+            scanner_marker, 1
+        )[0]
+        if any(name in worker_block for name in WORKER_FORBIDDEN_CAPABILITIES):
+            problems.append("dormant_worker_has_live_capability")
 
     if problems:
         raise LockedDeployViolation(",".join(dict.fromkeys(problems)))

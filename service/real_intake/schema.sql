@@ -159,7 +159,12 @@ CREATE TABLE IF NOT EXISTS real_deletion_requests (
     state TEXT NOT NULL CHECK (
         state IN ('requested', 'running', 'verified', 'failed')
     ),
-    verification_id TEXT,
+    verification_id TEXT CHECK (
+        verification_id IS NULL OR (
+            length(verification_id) BETWEEN 8 AND 128
+            AND verification_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$'
+        )
+    ),
     objects_deleted INTEGER CHECK (objects_deleted IS NULL OR objects_deleted >= 0),
     records_deleted INTEGER CHECK (records_deleted IS NULL OR records_deleted >= 0),
     requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -167,8 +172,61 @@ CREATE TABLE IF NOT EXISTS real_deletion_requests (
     -- Deliberately no document foreign key: a verified deletion request and its
     -- target UUID must survive removal of the document metadata row.
     CHECK (owner_clerk_user_id ~ '^user_[A-Za-z0-9_-]{8,128}$'),
-    CHECK (requested_by_clerk_user_id = owner_clerk_user_id)
+    CHECK (requested_by_clerk_user_id = owner_clerk_user_id),
+    CHECK (finished_at IS NULL OR finished_at >= requested_at),
+    CHECK (
+        state <> 'verified' OR (
+            verification_id IS NOT NULL
+            AND objects_deleted IS NOT NULL
+            AND records_deleted IS NOT NULL
+            AND finished_at IS NOT NULL
+        )
+    )
 );
+
+CREATE OR REPLACE FUNCTION enforce_real_deletion_tombstone()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'real deletion requests cannot be deleted';
+    END IF;
+    IF (
+        NEW.id,
+        NEW.document_id,
+        NEW.owner_clerk_user_id,
+        NEW.requested_by_clerk_user_id,
+        NEW.requested_at
+    ) IS DISTINCT FROM (
+        OLD.id,
+        OLD.document_id,
+        OLD.owner_clerk_user_id,
+        OLD.requested_by_clerk_user_id,
+        OLD.requested_at
+    ) THEN
+        RAISE EXCEPTION 'real deletion request identity is immutable';
+    END IF;
+    IF OLD.state = 'verified' AND NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION 'verified real deletion tombstone is immutable';
+    END IF;
+    IF NOT (
+        NEW.state = OLD.state
+        OR (OLD.state = 'requested' AND NEW.state IN ('running', 'failed'))
+        OR (OLD.state = 'running' AND NEW.state IN ('verified', 'failed'))
+        OR (OLD.state = 'failed' AND NEW.state = 'running')
+    ) THEN
+        RAISE EXCEPTION 'real deletion request transition denied';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS real_deletion_requests_tombstone
+    ON real_deletion_requests;
+CREATE TRIGGER real_deletion_requests_tombstone
+BEFORE UPDATE OR DELETE ON real_deletion_requests
+FOR EACH ROW EXECUTE FUNCTION enforce_real_deletion_tombstone();
 
 CREATE TABLE IF NOT EXISTS real_model_egress_consents (
     id UUID PRIMARY KEY,
@@ -248,7 +306,14 @@ AS $$
                        'string', 'number', 'boolean', 'null'
                    )
                 OR octet_length(field_value::text) > 512
-                OR lower(field_value::text) ~ '^"https?://'
+                OR (
+                    jsonb_typeof(field_value) = 'string'
+                    AND (
+                        field_value #>> '{}' <> btrim(field_value #>> '{}')
+                        OR field_value #>> '{}' ~ '[[:cntrl:]]'
+                        OR lower(field_value #>> '{}') ~ '^https?://'
+                    )
+                )
         );
 $$;
 
@@ -289,6 +354,10 @@ DROP TRIGGER IF EXISTS real_audit_events_append_only ON real_audit_events;
 CREATE TRIGGER real_audit_events_append_only
 BEFORE UPDATE OR DELETE ON real_audit_events
 FOR EACH ROW EXECUTE FUNCTION reject_real_audit_mutation();
+DROP TRIGGER IF EXISTS real_audit_events_no_truncate ON real_audit_events;
+CREATE TRIGGER real_audit_events_no_truncate
+BEFORE TRUNCATE ON real_audit_events
+FOR EACH STATEMENT EXECUTE FUNCTION reject_real_audit_mutation();
 
 CREATE INDEX IF NOT EXISTS real_documents_owner_created
     ON real_documents(owner_clerk_user_id, created_at DESC);

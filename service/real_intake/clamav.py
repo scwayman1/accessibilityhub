@@ -21,17 +21,23 @@ def classify_scan_response(response: bytes) -> ClamAvVerdict:
     if not response or len(response) > MAX_RESPONSE_BYTES or b"\x00" in response:
         return ClamAvVerdict(ScanVerdict.INDETERMINATE, "scanner_response_invalid")
     try:
-        text = response.decode("ascii").strip()
+        text = response.decode("ascii")
     except UnicodeDecodeError:
         return ClamAvVerdict(ScanVerdict.INDETERMINATE, "scanner_response_invalid")
-    if "\n" in text or "\r" in text or ":" not in text:
+    if "\n" in text or "\r" in text:
         return ClamAvVerdict(ScanVerdict.INDETERMINATE, "scanner_response_invalid")
-    _target, result = text.split(":", 1)
-    result = result.strip()
-    if result == "OK":
+    if text == "stream: OK":
         return ClamAvVerdict(ScanVerdict.CLEAN, "scanner_clean")
-    if result.endswith(" FOUND") and result.removesuffix(" FOUND").strip():
-        return ClamAvVerdict(ScanVerdict.REJECTED, "malware_detected")
+    prefix = "stream: "
+    suffix = " FOUND"
+    if text.startswith(prefix) and text.endswith(suffix):
+        signature = text[len(prefix):-len(suffix)]
+        if (
+            signature
+            and signature == signature.strip()
+            and all(33 <= ord(character) <= 126 for character in signature)
+        ):
+            return ClamAvVerdict(ScanVerdict.REJECTED, "malware_detected")
     return ClamAvVerdict(ScanVerdict.INDETERMINATE, "scanner_indeterminate")
 
 

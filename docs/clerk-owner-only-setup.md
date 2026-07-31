@@ -103,7 +103,7 @@ does not acquire the Clerk JWT dependency.
 | `CLERK_ISSUER` | Exact production Frontend API URL used as the JWT `iss` value. HTTPS only. |
 | `CLERK_AUTHORIZED_PARTY` | Exactly `https://accessibility.coastlinecollegefoundation.com`; code rejects every alternative, including a trailing slash. |
 | `HUB_OWNER_CLERK_USER_ID` | Clerk `user_…` ID captured only after Scott accepts the invitation. Never substitute the email address. |
-| `HUB_REAL_DOCUMENT_INTAKE` | Leave unset or `false`. Only the exact value `true` requests activation after every control passes. |
+| `HUB_REAL_DOCUMENT_INTAKE` | Set the literal `false` in the locked Blueprint. Unset is not valid for a deploy. A future reviewed active release may accept exact `true` only after every control passes. |
 | `HUB_REAL_INTAKE_CONTROL_MANIFEST` | Leave unset until the reviewed manifest version is approved. Current code expects `2026-07-30.v1`. |
 | `HUB_REAL_INTAKE_VERIFICATION_ID` | Reference to the completed positive/negative verification run, not a self-attestation entered in advance. |
 | `HUB_BYOK_MODEL_ENABLED` | Leave unset or `false`. |
@@ -133,9 +133,11 @@ Every real-document request must pass the same backend authorization function:
 6. Require `azp` to equal `CLERK_AUTHORIZED_PARTY`. This implementation rejects
    a missing `azp` rather than using Clerk's optional skip behavior.
 7. Reject a session with `sts=pending`, including an unfinished MFA task.
-8. Require `sub` to equal `HUB_OWNER_CLERK_USER_ID`. A matching email claim with
+8. Reject any `act` actor/impersonation claim and any active `o` Organization
+   claim. This launch accepts only Scott's direct personal session.
+9. Require `sub` to equal `HUB_OWNER_CLERK_USER_ID`. A matching email claim with
    a different subject is rejected.
-9. Attach the verified `sub` to each future document, job, deletion request, and
+10. Attach the verified `sub` to each future document, job, deletion request, and
    audit event. Do not accept an actor ID from request input.
 
 Clerk's [session-token reference](https://clerk.com/docs/guides/sessions/session-tokens)
@@ -169,7 +171,7 @@ Activation is a two-person-style operational checkpoint even though Scott is
 the sole application owner:
 
 1. Deploy the separate real-intake service entrypoint with
-   `HUB_REAL_DOCUMENT_INTAKE` unset. The existing public synthetic service and
+   `HUB_REAL_DOCUMENT_INTAKE=false`. The existing public synthetic service and
    its `render.yaml` remain unchanged.
 2. Configure the production Clerk values and private infrastructure secrets in
    Render. Confirm `/healthz` still reports
@@ -181,10 +183,15 @@ the sole application owner:
    rate-limit, and credential-revocation tests.
 5. Record the immutable verification-run ID and reviewed control-manifest
    version.
-6. Only then set `HUB_REAL_DOCUMENT_INTAKE=true` and deploy the reviewed release.
-   The runtime still refuses activation unless every live control attestation
-   passes.
-7. Upload one non-sensitive canary PDF first. Stop immediately if any audit,
+6. Prepare and review a separate active-release source and Blueprint change that
+   implements the handlers, replaces the locked-only predeploy invariant, binds
+   runtime evidence to the configured verification-run ID, and specifies the
+   exact maintenance-mode transition. Changing the environment variable alone
+   can never activate this foundation.
+7. Only after that reviewed release is approved may it accept exact
+   `HUB_REAL_DOCUMENT_INTAKE=true`; runtime evidence must still pass before
+   maintenance mode is disabled.
+8. Upload one non-sensitive canary PDF first. Stop immediately if any audit,
    scan, lifecycle, or deletion evidence is incomplete.
 
 The current foundation intentionally has no upload, process, download, or
@@ -194,7 +201,8 @@ delete route, so it cannot be activated yet even with configuration present.
 
 If identity, origin, or credentials may be compromised:
 
-1. Set `HUB_REAL_DOCUMENT_INTAKE=false` or remove it and redeploy first.
+1. Set the literal `HUB_REAL_DOCUMENT_INTAKE=false` and redeploy first. Do not
+   remove it; the locked deploy check intentionally rejects an unset value.
 2. Revoke Scott's Clerk sessions. Ban the user temporarily if the account itself
    may be compromised.
 3. Rotate affected Render and storage credentials; revoke queue, database, and

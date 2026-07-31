@@ -92,6 +92,56 @@ INSERT INTO real_audit_events (
     '{"object_size": 1024}'::jsonb
 );
 
+INSERT INTO real_deletion_requests (
+    id, document_id, owner_clerk_user_id, requested_by_clerk_user_id, state
+) VALUES (
+    '2f19b85b-e201-45b0-bbb1-c7278f3ec790',
+    'c2b21f86-66f7-43f5-94a4-4c5f9f9c35af',
+    'user_2RfWKJREkjKbHZy0Wqa5qrHeAnb',
+    'user_2RfWKJREkjKbHZy0Wqa5qrHeAnb',
+    'requested'
+);
+
+DO $$
+BEGIN
+    UPDATE real_deletion_requests
+       SET state = 'running'
+     WHERE id = '2f19b85b-e201-45b0-bbb1-c7278f3ec790';
+    UPDATE real_deletion_requests
+       SET state = 'verified',
+           verification_id = 'test-deletion-verification',
+           objects_deleted = 1,
+           records_deleted = 4,
+           finished_at = CURRENT_TIMESTAMP
+     WHERE id = '2f19b85b-e201-45b0-bbb1-c7278f3ec790';
+    BEGIN
+        DELETE FROM real_deletion_requests
+         WHERE id = '2f19b85b-e201-45b0-bbb1-c7278f3ec790';
+        RAISE EXCEPTION 'assert_verified_deletion_tombstone_was_deleted';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLERRM = 'assert_verified_deletion_tombstone_was_deleted' THEN
+            RAISE;
+        END IF;
+        IF SQLERRM <> 'real deletion requests cannot be deleted' THEN
+            RAISE;
+        END IF;
+    END;
+    BEGIN
+        UPDATE real_deletion_requests
+           SET records_deleted = 0
+         WHERE id = '2f19b85b-e201-45b0-bbb1-c7278f3ec790';
+        RAISE EXCEPTION 'assert_verified_deletion_tombstone_was_changed';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLERRM = 'assert_verified_deletion_tombstone_was_changed' THEN
+            RAISE;
+        END IF;
+        IF SQLERRM <> 'verified real deletion tombstone is immutable' THEN
+            RAISE;
+        END IF;
+    END;
+END;
+$$;
+
 DO $$
 BEGIN
     BEGIN
@@ -144,6 +194,12 @@ BEGIN
     IF changed_count <> 0 THEN
         RAISE EXCEPTION 'application role changed an append-only audit row';
     END IF;
+    BEGIN
+        TRUNCATE real_audit_events;
+        RAISE EXCEPTION 'assert_application_audit_truncate_was_accepted';
+    EXCEPTION WHEN insufficient_privilege THEN
+        NULL;
+    END;
 END;
 $$;
 
@@ -179,6 +235,17 @@ BEGIN
         RAISE EXCEPTION 'assert_audit_trigger_did_not_run';
     EXCEPTION WHEN OTHERS THEN
         IF SQLERRM = 'assert_audit_trigger_did_not_run' THEN
+            RAISE;
+        END IF;
+    END;
+    BEGIN
+        TRUNCATE real_audit_events;
+        RAISE EXCEPTION 'assert_audit_truncate_trigger_did_not_run';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLERRM = 'assert_audit_truncate_trigger_did_not_run' THEN
+            RAISE;
+        END IF;
+        IF SQLERRM <> 'real_audit_events is append-only' THEN
             RAISE;
         END IF;
     END;

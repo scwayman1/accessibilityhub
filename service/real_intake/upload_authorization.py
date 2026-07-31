@@ -76,6 +76,8 @@ def authorize_upload_completion(
     reasons: list[str] = []
     if checked_at.tzinfo is None or checked_at.utcoffset() is None:
         reasons.append("completion_time_invalid")
+    elif checked_at < authorization.created_at:
+        reasons.append("upload_authorization_not_yet_valid")
     elif checked_at > authorization.expires_at:
         reasons.append("upload_authorization_expired")
     if authorization.consumed_at is not None:

@@ -88,8 +88,11 @@ def _safe_scalar(value: object) -> bool:
     if not isinstance(value, (str, int, bool, type(None))):
         return False
     if isinstance(value, str):
-        return len(value) <= 256 and not value.lower().startswith(
-            ("http://", "https://")
+        return (
+            len(value) <= 256
+            and value == value.strip()
+            and not any(ord(character) < 32 for character in value)
+            and not value.lower().startswith(("http://", "https://"))
         )
     return True
 

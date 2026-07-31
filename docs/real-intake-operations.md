@@ -51,6 +51,26 @@ An owner deletion job must:
 8. Tell Scott the documented maximum backup-expiry delay separately from live
    deletion completion.
 
+### Backup restore after a deletion
+
+A restore must never resurrect a manually deleted document:
+
+1. Keep intake at the literal `false`, keep maintenance mode on, and keep the
+   worker stopped while restoring.
+2. Restore metadata and objects into an isolated recovery target, never directly
+   into the live service.
+3. Load the protected deletion tombstones and completed-deletion audit events
+   from the authoritative audit sink.
+4. Reapply every verified deletion to quarantine, clean, derivative, evidence,
+   authorization, job, finding, consent, and document records in the recovery
+   target.
+5. Verify absence using the same deletion inventory contract, record the restore
+   verification ID, and append a content-free recovery event to the protected
+   sink.
+6. Reconnect the recovered state only after the absence proof and the complete
+   negative-path suite pass. A missing tombstone, inaccessible sink, or partial
+   purge blocks recovery.
+
 ## Rate and abuse controls
 
 The code defines fail-closed private-counter limits:
@@ -74,8 +94,10 @@ sensitive operation is denied.
 For suspected identity, origin, code, storage, malware, worker, or audit
 compromise:
 
-1. Disable intake first by removing or setting
-   `HUB_REAL_DOCUMENT_INTAKE=false`, then redeploy the private service.
+1. Disable intake first by setting the literal
+   `HUB_REAL_DOCUMENT_INTAKE=false`, then redeploy the private service. Do not
+   remove or unset the variable: the locked deployment check requires explicit
+   `false`, and a failed emergency deploy could leave the previous release live.
 2. Confirm health reports `real_document_intake_enabled=false`.
 3. Revoke Scott's active Clerk sessions. Temporarily ban the Clerk user if the
    account may be compromised.

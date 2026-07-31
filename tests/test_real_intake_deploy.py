@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from service.real_intake.deploy_check import (
@@ -100,6 +101,8 @@ class SeparateBlueprintTests(unittest.TestCase):
             self.assertIn(value, self.private)
         self.assertNotIn("generation: manual", self.private)
         self.assertNotIn("accessibility-hub-staging", self.private)
+        self.assertEqual(self.private.count("branch: main"), 3)
+        self.assertNotIn("codex/controlled-real-intake-foundation", self.private)
 
     def test_secret_values_are_prompt_only(self):
         for name in (
@@ -145,6 +148,48 @@ class SeparateBlueprintTests(unittest.TestCase):
             "clamd_client",
         ):
             self.assertNotIn(prohibited, worker)
+
+    def test_dormant_worker_receives_no_live_service_credentials(self):
+        worker_block = self.private.split(
+            "          - type: worker\n", 1
+        )[1].split("          - type: pserv\n", 1)[0]
+        for prohibited in (
+            "HUB_POSTGRES_PRIVATE_URL",
+            "HUB_QUEUE_PRIVATE_URL",
+            "HUB_OBJECT_STORAGE_ENDPOINT",
+            "HUB_OBJECT_STORAGE_BUCKET",
+            "HUB_OBJECT_STORAGE_ACCESS_KEY_ID",
+            "HUB_OBJECT_STORAGE_SECRET_ACCESS_KEY",
+            "HUB_CLAMAV_PRIVATE_ENDPOINT",
+            "HUB_AUDIT_SINK",
+        ):
+            self.assertNotIn(prohibited, worker_block)
+
+    def test_locked_deploy_rejects_private_blueprint_regressions(self):
+        original = (ROOT / "render.real-intake.yaml").read_text()
+        cases = (
+            original.replace("maintenanceMode:", "maintenanceDisabled:", 1),
+            original.replace("branch: main", "branch: unsafe-feature", 1),
+            original.replace(
+                "          - type: worker\n",
+                "          - type: worker\n"
+                "            # HUB_POSTGRES_PRIVATE_URL must never be here.\n",
+                1,
+            ),
+        )
+        for changed in cases:
+            with self.subTest(change=changed[:40]):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "render.yaml").write_text(
+                        (ROOT / "render.yaml").read_text()
+                    )
+                    (root / "render.real-intake.yaml").write_text(changed)
+                    with self.assertRaises(LockedDeployViolation):
+                        verify_locked_deploy(
+                            locked_environment(),
+                            repository_root=root,
+                        )
 
 
 if __name__ == "__main__":

@@ -97,11 +97,30 @@ class OwnerAuthenticator:
             self.settings.value("CLERK_ISSUER"),
         )
         missing = [
-            claim for claim in REQUIRED_SESSION_CLAIMS
-            if claim not in claims or claims.get(claim) in {None, ""}
+            claim
+            for claim in REQUIRED_SESSION_CLAIMS
+            if (
+                claim not in claims
+                or claims.get(claim) is None
+                or claims.get(claim) == ""
+            )
         ]
         if missing:
             raise AuthenticationFailure("session_claims_missing")
+        for claim in ("azp", "iss", "jti", "sid", "sub"):
+            value = claims.get(claim)
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 512
+                or value != value.strip()
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise AuthenticationFailure("session_claims_invalid")
+        for claim in ("exp", "iat", "nbf"):
+            value = claims.get(claim)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise AuthenticationFailure("session_claims_invalid")
         if claims.get("iss") != self.settings.value("CLERK_ISSUER"):
             raise AuthenticationFailure("session_issuer_rejected")
         # The azp claim is mandatory here even though Clerk permits it to be
@@ -113,13 +132,24 @@ class OwnerAuthenticator:
             raise AuthenticationFailure("session_version_rejected")
         if claims.get("sts") == "pending":
             raise AuthenticationFailure("session_tasks_incomplete")
+        # This partition never permits actor-token impersonation or an active
+        # Organization context. Either claim indicates a different identity
+        # mode than the reviewed sole-owner personal session.
+        if "act" in claims:
+            raise AuthenticationFailure("impersonated_session_rejected")
+        if "o" in claims:
+            raise AuthenticationFailure("organization_session_rejected")
         owner_id = self.settings.value("HUB_OWNER_CLERK_USER_ID")
         if claims.get("sub") != owner_id:
             # Authorization is by immutable Clerk user ID, never an email claim.
             raise AuthenticationFailure("owner_identity_required", status=403)
         session_id = str(claims.get("sid"))
         token_id = str(claims.get("jti"))
-        if not session_id.startswith("sess_") or not token_id:
+        if (
+            not session_id.startswith("sess_")
+            or len(session_id) > 256
+            or len(token_id) > 256
+        ):
             raise AuthenticationFailure("session_identifiers_rejected")
         return OwnerIdentity(
             clerk_user_id=owner_id,

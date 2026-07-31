@@ -251,14 +251,22 @@ class RealIntakeSettings:
     def activation_blockers(
         self, evidence: RuntimeControlEvidence | None = None
     ) -> tuple[str, ...]:
+        runtime = evidence or RuntimeControlEvidence()
         blockers = list(self.configuration_blockers)
         if not self.activation_requested:
             blockers.append("activation_not_requested")
         if not REAL_DOCUMENT_ACTION_HANDLERS_IMPLEMENTED:
             blockers.append("real_document_action_handlers_not_implemented")
-        blockers.extend(
-            (evidence or RuntimeControlEvidence()).blockers
+        blockers.extend(runtime.blockers)
+        configured_verification_id = self.value(
+            "HUB_REAL_INTAKE_VERIFICATION_ID"
         )
+        if (
+            configured_verification_id
+            and runtime.verification_id
+            and runtime.verification_id != configured_verification_id
+        ):
+            blockers.append("runtime_verification_id_mismatch")
         return tuple(dict.fromkeys(blockers))
 
     def real_document_intake_enabled(

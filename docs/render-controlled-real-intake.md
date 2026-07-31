@@ -69,7 +69,9 @@ Scott Wayman (`scott@coastlinecollegefoundation.com`) is the incident owner for 
 
 ## Activation gate
 
-Keep `HUB_REAL_DOCUMENT_INTAKE` unset or false until all of the following have passing integration and negative-path tests:
+Keep `HUB_REAL_DOCUMENT_INTAKE` at the literal `false` until all of the
+following have passing integration and negative-path tests. The locked
+deployment check rejects an unset value:
 
 - Clerk owner token accepted; all other identities rejected.
 - Storage is private, encrypted, and prefix-limited.

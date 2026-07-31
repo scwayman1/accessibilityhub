@@ -65,11 +65,10 @@ def create_app(
             return _json_response(
                 start_response, "200 OK", settings.health_payload(evidence)
             )
-        if (
-            path == "/owner/session"
-            or path.startswith("/api/real-documents")
-            or path.startswith("/api/upload-authorizations")
-        ) and not _approved_request_target(environ):
+        # Every non-health route is inside the exact private origin boundary.
+        # Future routes inherit this default-deny check without maintaining a
+        # parallel list of sensitive prefixes.
+        if not _approved_request_target(environ):
             return _json_response(
                 start_response, "404 Not Found", {"error": "not_found"}
             )

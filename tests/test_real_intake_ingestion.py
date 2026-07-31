@@ -144,6 +144,20 @@ class UploadAuthorizationTests(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("upload_authorization_already_used", decision.reasons)
 
+    def test_completion_time_before_authorization_creation_is_denied(self):
+        decision = authorize_upload_completion(
+            authorization=self.authorization,
+            actor_clerk_user_id=OWNER_ID,
+            storage_key=self.authorization.quarantine_key,
+            content_type="application/pdf",
+            object_size=1_024,
+            now=NOW - timedelta(seconds=1),
+        )
+        self.assertFalse(decision.allowed)
+        self.assertIn(
+            "upload_authorization_not_yet_valid", decision.reasons
+        )
+
 
 class ClamAvEvidenceTests(unittest.TestCase):
     def test_only_exact_single_line_ok_is_clean(self):
@@ -154,12 +168,17 @@ class ClamAvEvidenceTests(unittest.TestCase):
         near_misses = (
             b"",
             b"OK",
+            b"anything: OK",
+            b" stream: OK",
+            b"stream: OK ",
             b"stream: ok",
             b"stream: OK\nsecond: OK",
             b"stream: OK\x00",
             b"x" * 1_025,
             b"stream: \xff",
             b"stream: ERROR",
+            b"other: Win.Test FOUND",
+            b"stream:  Win.Test FOUND",
         )
         for response in near_misses:
             self.assertEqual(

@@ -69,7 +69,8 @@ def basic_validation_issues(
     if not valid_owner_clerk_user_id(item.owner_clerk_user_id):
         issues.append("owner_identity_rejected")
     if (
-        not filename
+        not isinstance(filename, str)
+        or not filename
         or len(filename) > 200
         or filename != filename.strip()
         or "/" in filename
@@ -78,13 +79,28 @@ def basic_validation_issues(
         or not filename.lower().endswith(".pdf")
     ):
         issues.append("filename_rejected")
-    if item.declared_content_type != "application/pdf":
+    if (
+        not isinstance(item.declared_content_type, str)
+        or item.declared_content_type != "application/pdf"
+    ):
         issues.append("declared_content_type_rejected")
-    if item.object_size <= 0 or item.object_size > policy.max_bytes:
+    if (
+        not isinstance(item.object_size, int)
+        or isinstance(item.object_size, bool)
+        or item.object_size <= 0
+        or item.object_size > policy.max_bytes
+    ):
         issues.append("object_size_rejected")
-    if not item.signature_prefix.startswith(b"%PDF-"):
+    if (
+        not isinstance(item.signature_prefix, bytes)
+        or not item.signature_prefix.startswith(b"%PDF-")
+    ):
         issues.append("file_signature_rejected")
-    match = QUARANTINE_KEY.fullmatch(item.storage_key)
+    match = (
+        QUARANTINE_KEY.fullmatch(item.storage_key)
+        if isinstance(item.storage_key, str)
+        else None
+    )
     if match is None:
         issues.append("quarantine_key_rejected")
     elif match.group("owner") != item.owner_clerk_user_id:
@@ -103,26 +119,50 @@ def release_decision(
     if scan is None:
         reasons.append("scanner_unavailable")
     else:
-        if scan.verdict is not ScanVerdict.CLEAN:
+        if not isinstance(scan.verdict, ScanVerdict):
+            reasons.append("scan_indeterminate")
+        elif scan.verdict is not ScanVerdict.CLEAN:
             reasons.append(f"scan_{scan.verdict.value}")
         if (
-            scan.definitions_age_seconds < 0
+            not isinstance(scan.definitions_age_seconds, int)
+            or isinstance(scan.definitions_age_seconds, bool)
+            or scan.definitions_age_seconds < 0
             or scan.definitions_age_seconds > policy.max_definition_age_seconds
         ):
             reasons.append("scan_definitions_stale")
-        if not scan.engine_version or not scan.signature_database_version:
+        identities = (scan.engine_version, scan.signature_database_version)
+        if any(
+            not isinstance(value, str)
+            or not value
+            or len(value) > 128
+            or value != value.strip()
+            or any(ord(character) < 32 for character in value)
+            for value in identities
+        ):
             reasons.append("scan_identity_missing")
     if structure is None:
         reasons.append("structural_validation_missing")
     else:
-        if not structure.parser_completed:
+        if structure.parser_completed is not True:
             reasons.append("structural_validation_indeterminate")
-        if structure.page_count < 1 or structure.page_count > policy.max_pages:
+        if (
+            not isinstance(structure.page_count, int)
+            or isinstance(structure.page_count, bool)
+            or structure.page_count < 1
+            or structure.page_count > policy.max_pages
+        ):
             reasons.append("page_limit_rejected")
-        if structure.stream_count < 0 or structure.stream_count > policy.max_streams:
+        if (
+            not isinstance(structure.stream_count, int)
+            or isinstance(structure.stream_count, bool)
+            or structure.stream_count < 0
+            or structure.stream_count > policy.max_streams
+        ):
             reasons.append("stream_count_rejected")
         if (
-            structure.expanded_stream_bytes < 0
+            not isinstance(structure.expanded_stream_bytes, int)
+            or isinstance(structure.expanded_stream_bytes, bool)
+            or structure.expanded_stream_bytes < 0
             or structure.expanded_stream_bytes > policy.max_expanded_stream_bytes
         ):
             reasons.append("expanded_stream_limit_rejected")

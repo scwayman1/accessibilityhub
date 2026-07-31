@@ -1,5 +1,5 @@
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from service.real_intake.consent import (
     ModelEgressConsent,
@@ -223,7 +223,7 @@ class ModelEgressConsentTests(unittest.TestCase):
             byok_credential_reference="render-secret:future-provider-key",
         )
         self.consent = ModelEgressConsent(
-            id="consent-id",
+            id="a3ab9032-12d3-4f82-9d94-b4f85869b70d",
             document_id=DOCUMENT_ID,
             owner_clerk_user_id=OWNER_ID,
             provider="future-provider",
@@ -286,6 +286,41 @@ class ModelEgressConsentTests(unittest.TestCase):
                 consent=consent,
             )
             self.assertFalse(decision.allowed)
+            self.assertIn(reason, decision.reasons)
+
+    def test_malformed_future_model_scope_and_consent_fail_closed(self):
+        malformed_request = ModelEgressRequest(
+            **{
+                **self.request.__dict__,
+                "provider": " ",
+                "purpose": " https://unexpected.invalid",
+                "byok_credential_reference": "raw-secret-value",
+            }
+        )
+        malformed_consent = ModelEgressConsent(
+            **{
+                **self.consent.__dict__,
+                "id": "not-a-consent-id",
+                "provider": " ",
+                "purpose": "\n",
+                "granted_at": datetime.now(UTC) + timedelta(minutes=1),
+            }
+        )
+        decision = authorize_model_egress(
+            feature_enabled=True,
+            request=malformed_request,
+            document_owner_clerk_user_id=OWNER_ID,
+            consent=malformed_consent,
+        )
+        self.assertFalse(decision.allowed)
+        for reason in (
+            "model_provider_invalid",
+            "model_purpose_invalid",
+            "byok_credential_required",
+            "document_consent_identifier_invalid",
+            "document_consent_scope_invalid",
+            "document_consent_time_invalid",
+        ):
             self.assertIn(reason, decision.reasons)
 
 
