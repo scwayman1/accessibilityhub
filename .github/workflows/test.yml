@@ -12,15 +12,22 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-real-intake.txt
       - name: Install OCR engine
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y tesseract-ocr postgresql
       - name: Compile Python modules
-        run: python -m py_compile check_pdf.py local_reviewer.py tina/kernel.py tina/remedy.py tina/derive.py tina/evidence.py tina/learning.py tina/intelligence.py tina/lessons.py tina/structure.py tina/ocr.py service/__init__.py service/fixtures.py service/settings.py service/repository.py service/worker.py service/app.py service/wsgi.py service/__main__.py
+        run: python -m compileall -q check_pdf.py local_reviewer.py tina service
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Run PostgreSQL security contract
+        run: |
+          sudo service postgresql start
+          sudo -u postgres psql --set ON_ERROR_STOP=1 --file service/real_intake/schema.sql
+          sudo -u postgres psql --set ON_ERROR_STOP=1 --file tests/real_intake_schema_security.sql
