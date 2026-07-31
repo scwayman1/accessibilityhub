@@ -162,6 +162,33 @@ class DetailPanelResetTests(unittest.TestCase):
         self.assertIn(message, self.source)
 
 
+class PriorityZeroAccessibilityTests(unittest.TestCase):
+    """Core intake and Improve controls remain operable under keyboard and reflow."""
+
+    def setUp(self):
+        self.source = Path("local_reviewer.html").read_text()
+
+    def test_pdf_input_remains_in_the_keyboard_focus_order(self):
+        input_tag = self.source.split('<input id="pdf"', 1)[1].split(">", 1)[0]
+        self.assertIn('class="file-picker"', input_tag)
+        self.assertNotIn("hidden", input_tag)
+        self.assertIn('aria-describedby="pdfPrivacy"', input_tag)
+
+    def test_pdf_input_has_an_explicit_visible_label(self):
+        self.assertIn('<label class="upload-title" for="pdf">Choose a PDF</label>', self.source)
+
+    def test_pdf_input_can_shrink_inside_a_320px_layout(self):
+        self.assertIn(".file-picker{display:block;width:100%;min-width:0", self.source)
+
+    def test_narrow_layout_hides_only_the_setup_guide(self):
+        self.assertIn(
+            ".layout{grid-template-columns:1fr}#guide{display:none}"
+            ".detail .side{display:block;position:static}",
+            self.source,
+        )
+        self.assertNotIn(".layout{grid-template-columns:1fr}.side{display:none}", self.source)
+
+
 class NewDocumentResetTests(unittest.TestCase):
     """Choosing a new PDF must clear every per-document artifact of the last review."""
 
