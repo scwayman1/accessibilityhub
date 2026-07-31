@@ -77,18 +77,28 @@ class StagingServiceTests(unittest.TestCase):
         self.assertTrue(status.startswith("200"))
         self.assertEqual(headers["Content-Type"], "image/png")
         self.assertTrue(payload.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertIn(b"coastline-college-logo-white.png", self.request("/login")[2])
+        self.login()
+        self.assertIn(b"coastline-college-logo-white.png", self.request("/app")[2])
 
     def test_private_workspace_uses_labeled_workflow_steps_and_finding_chips(self):
         self.login()
         status, _, workspace = self.request("/app")
         self.assertTrue(status.startswith("200"))
-        for label in (b"Add material", b"Review", b"Improve", b"Check again"):
+        for label in (b"Choose sample", b"Review findings", b"Improve", b"Check again"):
             self.assertIn(label, workspace)
-        self.assertIn(b"panel rail", workspace)
+        self.assertIn(b"class=app-shell", workspace)
+        self.assertIn(b"class=sidebar", workspace)
+        self.assertIn(b'href="#main-content"', workspace)
+        self.assertEqual(workspace.count(b'aria-current="step"'), 1)
+        self.assertEqual(workspace.count(b"Start a sample review"), 1)
+        self.assertIn(b"Synthetic demo only", workspace)
+        self.assertIn(b"Real-document upload is unavailable", workspace)
+        self.assertNotIn(b'type="file"', workspace)
+        self.assertNotIn(b"type=file", workspace)
         self.assertIn(b":focus-visible", workspace)
-        self.assertIn(b"@media(max-width:800px)", workspace)
-        self.assertIn(b".workspace { grid-template-columns:1fr }", workspace)
+        self.assertIn(b"@media(max-width:900px)", workspace)
+        self.assertIn(b".app-shell { grid-template-columns:1fr }", workspace)
+        self.assertIn(b"prefers-reduced-motion:reduce", workspace)
 
         _, headers, _ = self.request("/documents/synthetic", "POST")
         document_id = headers["Location"].rsplit("/", 1)[-1]
@@ -111,8 +121,10 @@ class StagingServiceTests(unittest.TestCase):
         status, _, page = self.request(f"/documents/{document_id}")
         self.assertTrue(status.startswith("200"))
         self.assertIn(b"Needs attention", page)
-        self.assertIn(b"Fix Lab", page)
-        self.assertIn(b"Update title and language", page)
+        self.assertIn(b"Fix the clearest issues", page)
+        self.assertIn(b'for=document-title', page)
+        self.assertIn(b'for=document-language', page)
+        source_hash = self.repository.document("coastline-staging", document_id)["sha256"]
 
         status, headers, _ = self.request(
             f"/documents/{document_id}/remediate/metadata", "POST",
@@ -128,6 +140,14 @@ class StagingServiceTests(unittest.TestCase):
         self.assertEqual(provenance[0]["kind"], "metadata")
         self.assertTrue(provenance[0]["provenance"]["mutates_document"])
         self.assertEqual(provenance[0]["provenance"]["actions"][0]["rule_id"], "PDF.METADATA.TITLE")
+        status, _, child_page = self.request(f"/documents/{child_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Recheck complete", child_page)
+        self.assertIn(b"Your improved copy is ready", child_page)
+        self.assertIn(b"2 accessibility signals are now verified", child_page)
+        self.assertIn(document_id.encode(), child_page)
+        self.assertIn(b'aria-current="step"', child_page)
+        self.assertEqual(self.repository.document("coastline-staging", document_id)["sha256"], source_hash)
         status, headers, _ = self.request(f"/documents/{document_id}/delete", "POST", {"confirmed": "yes"})
         self.assertTrue(status.startswith("303"))
         self.assertEqual(headers["Location"], "/app")
@@ -243,7 +263,11 @@ class StagingServiceTests(unittest.TestCase):
         status, _, page = self.request(f"/documents/{document_id}")
         self.assertTrue(status.startswith("200"))
         self.assertIn(b'http-equiv="refresh"', page)
-        self.assertIn(b"refreshes automatically", page)
+        self.assertIn(b"checks again every five seconds", page)
+        self.assertIn(b"role=status", page)
+        self.assertIn(b"aria-live=polite", page)
+        self.assertIn(b"Refresh now", page)
+        self.assertNotIn(b"Fix the clearest issues", page)
         self.assertNotIn(b"location.reload", page)  # CSP blocks inline script; refresh must not rely on it.
         self.assertTrue(self.worker.run_once())
         job = self.repository.latest_job("coastline-staging", document_id)
@@ -251,6 +275,35 @@ class StagingServiceTests(unittest.TestCase):
         status, _, page = self.request(f"/documents/{document_id}")
         self.assertTrue(status.startswith("200"))
         self.assertNotIn(b'http-equiv="refresh"', page)
+
+    def test_public_demo_is_unauthenticated_but_remains_bundled_fixture_only(self):
+        settings = ServiceSettings(
+            "staging", Path(self.temp.name) / "public-demo", "synthetic-only-code", "s" * 48,
+            (), allow_hosted_synthetic=True, public_access=True,
+        )
+        repository = StagingRepository(settings.data_dir)
+        worker = AssessmentWorker(repository)
+        app = create_app(settings, repository, worker)
+        original_app, original_repository, original_worker = self.app, self.repository, self.worker
+        try:
+            self.app, self.repository, self.worker = app, repository, worker
+            self.cookie = ""
+            status, _, page = self.request("/app")
+            self.assertTrue(status.startswith("200"))
+            self.assertIn(b"Synthetic demo only", page)
+            self.assertIn(b'action="/documents/synthetic"', page)
+            self.assertNotIn(b"multipart/form-data", page)
+            self.assertNotIn(b"type=file", page)
+            for path in ("/documents/upload", "/api/real-documents", "/api/upload-authorizations"):
+                status, _, _ = self.request(path, "POST")
+                self.assertTrue(status.startswith("404"), path)
+            payload = json.loads(self.request("/healthz")[2])
+            self.assertTrue(payload["synthetic_only"])
+            self.assertFalse(payload["hosted_intake_enabled"])
+        finally:
+            worker.stop()
+            self.app, self.repository, self.worker = original_app, original_repository, original_worker
+            self.cookie = ""
 
     def test_human_confirmed_structure_recheck_uses_the_existing_tag_tree_remediator(self):
         self.login()
