@@ -1,0 +1,204 @@
+# Separate, manually synced Blueprint for the locked real-document control plane.
+# This file is intentionally not render.yaml: the existing public synthetic
+# service remains managed by its own Blueprint and must not acquire these
+# resources or environment variables.
+previews:
+  generation: "off"
+
+projects:
+  - name: Coastline Accessibility Hub Private Real Intake
+    environments:
+      - name: Locked Production
+        networking:
+          isolation: enabled
+        permissions:
+          protection: enabled
+        services:
+          - type: web
+            name: accessibility-hub-real-intake
+            runtime: python
+            plan: starter
+            region: oregon
+            repo: https://github.com/scwayman1/accessibilityhub
+            branch: codex/controlled-real-intake-foundation
+            autoDeployTrigger: "off"
+            buildCommand: pip install -r requirements-real-intake.txt
+            preDeployCommand: python -m service.real_intake.deploy_check
+            startCommand: >-
+              gunicorn --workers 1 --threads 4 --bind 0.0.0.0:$PORT
+              service.real_intake.wsgi:application
+            healthCheckPath: /healthz
+            maxShutdownDelaySeconds: 30
+            domains:
+              - accessibility.coastlinecollegefoundation.com
+            renderSubdomainPolicy: disabled
+            maintenanceMode:
+              enabled: true
+            envVars:
+              - key: HUB_ENV
+                value: production
+              - key: HUB_REAL_DOCUMENT_INTAKE
+                value: "false"
+              - key: HUB_REAL_INTAKE_CONTROL_MANIFEST
+                value: 2026-07-30.v1
+              - key: CLERK_AUTHORIZED_PARTY
+                value: https://accessibility.coastlinecollegefoundation.com
+              - key: HUB_BYOK_MODEL_ENABLED
+                value: "false"
+              - key: HUB_MODEL_EGRESS_ENABLED
+                value: "false"
+              - key: HUB_POSTGRES_PRIVATE_URL
+                fromDatabase:
+                  name: accessibility-hub-real-metadata
+                  property: connectionString
+              - key: HUB_QUEUE_PRIVATE_URL
+                fromService:
+                  type: keyvalue
+                  name: accessibility-hub-real-queue
+                  property: connectionString
+              - key: HUB_CLAMAV_PRIVATE_ENDPOINT
+                fromService:
+                  type: pserv
+                  name: accessibility-hub-clamav
+                  property: hostport
+              - key: HUB_AUDIT_SINK
+                fromDatabase:
+                  name: accessibility-hub-real-audit
+                  property: connectionString
+              - key: HUB_LIFECYCLE_POLICY_ID
+                value: manual-owner-deletion-only
+              - key: CLERK_PUBLISHABLE_KEY
+                sync: false
+              - key: CLERK_JWT_KEY
+                sync: false
+              - key: CLERK_ISSUER
+                sync: false
+              - key: HUB_OWNER_CLERK_USER_ID
+                sync: false
+              - key: HUB_OBJECT_STORAGE_ENDPOINT
+                sync: false
+              - key: HUB_OBJECT_STORAGE_BUCKET
+                sync: false
+              - key: HUB_OBJECT_STORAGE_ACCESS_KEY_ID
+                sync: false
+              - key: HUB_OBJECT_STORAGE_SECRET_ACCESS_KEY
+                sync: false
+              - key: HUB_WORKER_ISOLATION_ATTESTATION
+                sync: false
+              - key: HUB_BACKUP_DELETION_SLA
+                sync: false
+              - key: HUB_REAL_INTAKE_VERIFICATION_ID
+                sync: false
+
+          - type: worker
+            name: accessibility-hub-real-worker
+            runtime: python
+            plan: starter
+            region: oregon
+            repo: https://github.com/scwayman1/accessibilityhub
+            branch: codex/controlled-real-intake-foundation
+            autoDeployTrigger: "off"
+            buildCommand: pip install -r requirements-real-intake.txt
+            preDeployCommand: python -m service.real_intake.deploy_check
+            startCommand: python -m service.real_intake.locked_worker
+            maxShutdownDelaySeconds: 30
+            envVars:
+              - key: HUB_ENV
+                value: production
+              - key: HUB_REAL_DOCUMENT_INTAKE
+                value: "false"
+              - key: HUB_REAL_INTAKE_CONTROL_MANIFEST
+                value: 2026-07-30.v1
+              - key: CLERK_AUTHORIZED_PARTY
+                value: https://accessibility.coastlinecollegefoundation.com
+              - key: HUB_BYOK_MODEL_ENABLED
+                value: "false"
+              - key: HUB_MODEL_EGRESS_ENABLED
+                value: "false"
+              - key: HUB_POSTGRES_PRIVATE_URL
+                fromDatabase:
+                  name: accessibility-hub-real-metadata
+                  property: connectionString
+              - key: HUB_QUEUE_PRIVATE_URL
+                fromService:
+                  type: keyvalue
+                  name: accessibility-hub-real-queue
+                  property: connectionString
+              - key: HUB_AUDIT_SINK
+                fromDatabase:
+                  name: accessibility-hub-real-audit
+                  property: connectionString
+              - key: HUB_LIFECYCLE_POLICY_ID
+                value: manual-owner-deletion-only
+              - key: HUB_OBJECT_STORAGE_ENDPOINT
+                sync: false
+              - key: HUB_OBJECT_STORAGE_BUCKET
+                sync: false
+              - key: HUB_OBJECT_STORAGE_ACCESS_KEY_ID
+                sync: false
+              - key: HUB_OBJECT_STORAGE_SECRET_ACCESS_KEY
+                sync: false
+              - key: HUB_WORKER_ISOLATION_ATTESTATION
+                sync: false
+              - key: HUB_BACKUP_DELETION_SLA
+                sync: false
+              - key: HUB_REAL_INTAKE_VERIFICATION_ID
+                sync: false
+
+          - type: pserv
+            name: accessibility-hub-clamav
+            runtime: docker
+            plan: pro
+            region: oregon
+            repo: https://github.com/scwayman1/accessibilityhub
+            branch: codex/controlled-real-intake-foundation
+            autoDeployTrigger: "off"
+            dockerfilePath: ./deploy/clamav/Dockerfile
+            dockerContext: .
+            maxShutdownDelaySeconds: 30
+            disk:
+              name: clamav-signatures
+              mountPath: /var/lib/clamav
+              sizeGB: 1
+            envVars:
+              - key: CLAMAV_NO_CLAMD
+                value: "false"
+              - key: CLAMAV_NO_FRESHCLAMD
+                value: "false"
+              - key: CLAMAV_NO_MILTERD
+                value: "true"
+              - key: CLAMD_STARTUP_TIMEOUT
+                value: 1800
+              - key: FRESHCLAM_CHECKS
+                value: 24
+
+          - type: keyvalue
+            name: accessibility-hub-real-queue
+            plan: starter
+            region: oregon
+            ipAllowList: []
+            maxmemoryPolicy: noeviction
+            persistenceMode: journal-snapshot
+
+        databases:
+          - name: accessibility-hub-real-metadata
+            plan: basic-1gb
+            region: oregon
+            postgresMajorVersion: "18"
+            databaseName: accessibility_hub_real
+            user: accessibility_hub_real
+            diskSizeGB: 15
+            storageAutoscalingEnabled: false
+            connectionPool: none
+            ipAllowList: []
+
+          - name: accessibility-hub-real-audit
+            plan: basic-256mb
+            region: oregon
+            postgresMajorVersion: "18"
+            databaseName: accessibility_hub_audit
+            user: accessibility_hub_audit
+            diskSizeGB: 15
+            storageAutoscalingEnabled: false
+            connectionPool: none
+            ipAllowList: []

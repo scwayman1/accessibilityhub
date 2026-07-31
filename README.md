@@ -15,6 +15,7 @@ Canonical product documents:
 - [Controlled real-intake operations, deletion, and incident runbook](docs/real-intake-operations.md)
 - [Controlled real-intake verification matrix](docs/real-intake-control-matrix.md)
 - [Private ClamAV scanner specification](docs/clamav-private-scanner.md)
+- [Private real-intake provisioning checkpoint](docs/real-intake-provisioning-checkpoint.md)
 - [Progress ledger — PRD phases vs shipped evidence](docs/progress-ledger.md)
 - [Next engineering loop — PRD and handoff](docs/next-loop-prd.md)
 - [Product assessment (July 2026)](docs/product-assessment-2026-07.md)
