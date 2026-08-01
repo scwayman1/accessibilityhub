@@ -84,7 +84,7 @@ class StagingServiceTests(unittest.TestCase):
         self.login()
         status, _, workspace = self.request("/app")
         self.assertTrue(status.startswith("200"))
-        for label in (b"Choose sample", b"Review findings", b"Improve", b"Check again"):
+        for label in (b"Review", b"Understand", b"Improve", b"Verify"):
             self.assertIn(label, workspace)
         self.assertIn(b"class=app-shell", workspace)
         self.assertIn(b"class=sidebar", workspace)

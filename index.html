@@ -12,6 +12,8 @@
     body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.5 var(--sans); }
     a { color:inherit; }
     :focus-visible { outline:2px solid var(--cyan); outline-offset:5px; }
+    .skip-link { position:fixed; z-index:20; top:10px; left:10px; padding:10px 14px; color:var(--white); background:#176878; text-decoration:none; transform:translateY(-160%); }
+    .skip-link:focus { transform:none; }
     .shell { width:min(1320px,calc(100% - 64px)); margin:0 auto; }
     .site-header { position:absolute; inset:0 0 auto; z-index:5; color:var(--white); padding:24px 0; }
     .nav { display:flex; align-items:center; justify-content:space-between; gap:24px; }
@@ -59,20 +61,22 @@
     .section { padding:118px 0; }.section--warm { background:var(--paper); }.section--dark { color:var(--white); background:var(--ink-2); }
     .section-intro { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,.66fr); gap:80px; align-items:end; margin-bottom:56px; }
     h2 { max-width:760px; margin:0; font-size:clamp(44px,4.15vw,68px); line-height:.97; }.section-intro p { max-width:440px; margin:0; color:#53646a; font-size:17px; }.section--dark .section-label { color:var(--cyan); }.section--dark .section-intro p { color:rgba(248,246,240,.66); }
-    .sequence { display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid #c6cdc9; }.step { min-height:255px; padding:24px 26px 20px 0; border-right:1px solid #c6cdc9; }.step:not(:first-child) { padding-left:26px; }.step:last-child { border-right:0; }.step-index { color:#678287; font:11px ui-monospace,SFMono-Regular,Menlo,monospace; }.step h3 { margin:61px 0 10px; font-size:17px; letter-spacing:-.035em; }.step p { max-width:230px; margin:0; color:#53646a; font-size:14px; }
+    .sequence { display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid #c6cdc9; }.step { min-height:255px; padding:24px 26px 20px 0; border-right:1px solid #c6cdc9; }.step:not(:first-child) { padding-left:26px; }.step:last-child { border-right:0; }.step-index { color:#435e66; font:14px ui-monospace,SFMono-Regular,Menlo,monospace; }.step h3 { margin:61px 0 10px; font-size:17px; letter-spacing:-.035em; }.step p { max-width:230px; margin:0; color:#53646a; font-size:14px; }
     .boundary-grid { display:grid; grid-template-columns:.88fr 1.12fr; gap:90px; }.boundary-grid h2 { max-width:500px; }.boundary-grid > p { margin:22px 0 0; color:rgba(248,246,240,.7); font-size:16px; }.principles { display:grid; grid-template-columns:1fr 1fr; gap:0 34px; margin:0; padding:0; list-style:none; border-top:1px solid rgba(255,255,255,.2); }.principles li { padding:20px 0; border-bottom:1px solid rgba(255,255,255,.2); color:rgba(248,246,240,.79); font-size:14px; }.principles li::before { content:"—"; margin-right:10px; color:var(--copper); }
     .cta { padding:122px 0; text-align:center; background:var(--paper-2); }.cta h2 { margin:0 auto 20px; }.cta p { max-width:510px; margin:0 auto 30px; color:#53646a; font-size:17px; }.footer { padding:28px 0; color:rgba(248,246,240,.65); background:var(--ink); font-size:12px; }.footer .shell { display:flex; justify-content:space-between; gap:20px; }.footer p { margin:0; }.footer a { color:var(--white); }
+    .brand small,.nav-links,.nav-cta,.button,.eyebrow,.section-label,.text-link,.path-card p,.boundary-card h3,.boundary-card p,.evidence-bar p,.evidence-item,.evidence-item strong,.footer { font-size:14px; }
     @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; }.nav-cta,.button { transition:none; }.hero-media img { transform:none; } }
     @media (max-width:820px) { .shell { width:min(100% - 40px,1320px); }.site-header { padding:18px 0; }.nav { align-items:flex-start; }.nav-links { flex-wrap:wrap; justify-content:flex-end; gap:12px 18px; }.hero { min-height:760px; }.hero-media img { object-position:65% center; }.hero-media::after { background:linear-gradient(90deg,rgba(5,13,17,.96),rgba(5,13,17,.63) 56%,rgba(5,13,17,.14)),linear-gradient(0deg,rgba(5,13,17,.55),transparent 45%); }.hero-grid { padding-top:126px; align-items:start; }.boundary { grid-template-columns:1fr; gap:10px; max-width:430px; }.asset-note { display:none; }.evidence-bar .shell { grid-template-columns:1fr 1fr; }.evidence-bar p { grid-column:1/-1; }.section { padding:78px 0; }.section-intro,.boundary-grid { grid-template-columns:1fr; gap:25px; }.sequence { grid-template-columns:1fr 1fr; }.step:nth-child(2) { border-right:0; }.step:nth-child(n+3) { border-top:1px solid #c6cdc9; }.step:nth-child(3) { padding-left:0; }.step h3 { margin-top:38px; }.principles { grid-template-columns:1fr; }.footer .shell { display:block; }.footer p + p { margin-top:9px; } }
     @media (max-width:520px) { .shell { width:calc(100% - 32px); }.site-header .nav { display:block; }.brand { margin-bottom:14px; }.brand small { display:none; }.nav-links { justify-content:flex-start; }.nav-cta { min-height:39px; padding:0 11px; }.hero { min-height:780px; }.hero-media img { object-position:67% center; }.hero-media::after { background:linear-gradient(90deg,rgba(5,13,17,.96),rgba(5,13,17,.81) 56%,rgba(5,13,17,.2)),linear-gradient(0deg,rgba(5,13,17,.64),transparent 46%); }.hero-grid { padding-top:184px; }.hero-copy { font-size:16px; }.path-grid { grid-template-columns:1fr; }.path-card p { min-height:0; }.sequence { grid-template-columns:1fr; }.step,.step:not(:first-child),.step:nth-child(3) { padding:22px 0; border-right:0; border-top:1px solid #c6cdc9; }.step:first-child { border-top:0; }.cta { padding:82px 0; } }
   </style>
 </head>
-<body>
+<body id="top">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="site-header"><div class="shell nav">
     <a class="brand" href="#top" aria-label="Coastline College Accessibility Hub home"><span class="brand-mark" aria-hidden="true"></span><span>Coastline <small>College Accessibility Hub</small></span></a>
     <nav class="nav-links" aria-label="Primary navigation"><a href="#how-it-works">How it works</a><a href="#boundaries">Boundaries</a><a class="nav-cta" href="#choose-path">Choose a path</a></nav>
   </div></header>
-  <main id="top">
+  <main id="main-content" tabindex="-1">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-media"><img src="assets/coastline-evidence-desk.png" alt="An evidence desk by the coastline: printed course materials laid out for review in evening light" onerror="this.remove()"></div>
       <div class="shell hero-grid"><div>
