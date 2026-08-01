@@ -50,8 +50,11 @@ class AccessibleDesignContractTests(unittest.TestCase):
 
     def test_functional_secondary_type_has_a_14_pixel_floor(self):
         self.assertIn(".brand small,.nav-links,.nav-cta,.button", self.public)
+        self.assertIn(".path-card .path-kind { margin:0 0 7px; color:var(--cyan); font:750 14px", self.public)
         self.assertIn(".brand small,.back,.eyebrow", self.sample)
         self.assertIn(".steps li,.upload p,.btn", self.local)
+        self.assertIn("#meta{font:14px var(--mono);color:var(--muted)}", self.local)
+        self.assertIn("@media(max-width:760px){.bar .scope{display:none}", self.local)
         self.assertIn(".eyebrow,.small,.product-lockup span", self.staging)
         for source in (self.public, self.sample, self.local, self.staging):
             self.assertIn("font-size:14px", source)
