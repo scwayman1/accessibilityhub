@@ -53,7 +53,7 @@ class ReviewCompletenessBlockTests(unittest.TestCase):
     def test_completeness_block_is_a_collapsed_details_element(self):
         self.assertIn("document.createElement('details')", self.source)
         self.assertIn("completeness.id='completeness'", self.source)
-        self.assertIn("summaryEl.textContent='Review completeness'", self.source)
+        self.assertIn("summaryEl.textContent='Could not be checked or assessed (", self.source)
 
     def test_not_assessed_areas_render_with_area_and_reason(self):
         self.assertIn("report.not_assessed||[]", self.source)
@@ -187,6 +187,47 @@ class PriorityZeroAccessibilityTests(unittest.TestCase):
             self.source,
         )
         self.assertNotIn(".layout{grid-template-columns:1fr}.side{display:none}", self.source)
+
+
+class PriorityTwoActionWorkspaceTests(unittest.TestCase):
+    """Results become a semantic action queue without changing report contracts."""
+
+    def setUp(self):
+        self.source = Path("local_reviewer.html").read_text()
+
+    def test_internal_categories_are_mapped_only_in_the_presentation(self):
+        self.assertIn("label:'Fix now'", self.source)
+        self.assertIn("new Set(['blocking_technical_failure','deterministic_defect'])", self.source)
+        self.assertIn("label:'Needs your judgment'", self.source)
+        self.assertIn("new Set(['review_required','advisory'])", self.source)
+        self.assertIn("group.categories.has(f.category)", self.source)
+
+    def test_tool_limitations_stay_in_a_separate_collapsed_block(self):
+        self.assertIn("document.createElement('details')", self.source)
+        self.assertIn("Could not be checked or assessed", self.source)
+        self.assertIn("listed here as tool limitations", self.source)
+
+    def test_findings_control_one_labeled_action_workspace(self):
+        self.assertIn('aria-label="Prioritized action queue"', self.source)
+        self.assertIn('aria-labelledby="detailTitle"', self.source)
+        self.assertIn('class="workspace-label">Action workspace', self.source)
+        self.assertIn("row.setAttribute('aria-controls','detail')", self.source)
+
+    def test_selection_exposes_only_one_current_finding(self):
+        self.assertIn("x.removeAttribute('aria-current')", self.source)
+        self.assertIn("row.setAttribute('aria-current','true')", self.source)
+
+    def test_explicit_selection_moves_focus_to_the_updated_heading(self):
+        self.assertIn('id="detailTitle" tabindex="-1"', self.source)
+        self.assertIn("row.onclick=()=>showDetail(f,row,true)", self.source)
+        self.assertIn("if(userInitiated){detailTitle.focus({preventScroll:true})", self.source)
+        self.assertIn("detail.scrollIntoView({block:'nearest'})", self.source)
+
+    def test_narrow_selection_expands_inline_beneath_the_finding(self):
+        self.assertIn("window.matchMedia('(max-width:760px)')", self.source)
+        self.assertIn("selectedFindingRow.insertAdjacentElement('afterend',detail)", self.source)
+        self.assertIn("detail.classList.toggle('inline-detail',inline)", self.source)
+        self.assertIn("else layout.appendChild(detail)", self.source)
 
 
 class NewDocumentResetTests(unittest.TestCase):
