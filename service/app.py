@@ -23,7 +23,7 @@ from tina.derive import extract_blocks
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
 from service.repository import StagingRepository, now as repo_now
 from service.settings import ServiceSettings
-from service.worker import AssessmentWorker, LANE_ORDER
+from service.worker import AssessmentWorker, LANE_ORDER, next_version_name as _next_version_name, split_version as _split_version
 
 TENANT_ID = "coastline-staging"
 ACTOR_ID = "staging-educator"
@@ -46,8 +46,6 @@ PARTNER_ADS_PATH = Path(__file__).resolve().parents[1] / "partner_ads.json"
 STRUCTURE_ROLES = (("h1", "Heading level 1"), ("h2", "Heading level 2"), ("h3", "Heading level 3"), ("p", "Paragraph"), ("li", "List item"))
 MAX_FORM_BLOCKS = 80
 
-_VERSION_PATTERN = re.compile(r"^(?P<base>.+)\.v(?P<version>\d+)$")
-
 _FALLBACK_FAVICON = (
     b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
     b'<rect width="64" height="64" rx="14" fill="#F0563F"/>'
@@ -55,27 +53,38 @@ _FALLBACK_FAVICON = (
 )
 
 
-def _split_version(filename: str) -> tuple[str, int]:
-    """('base', N) for base.vN.pdf; legacy '.rechecked' chains collapse to the base."""
-    stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
-    while stem.endswith(".rechecked"):
-        stem = stem[: -len(".rechecked")]
-    match = _VERSION_PATTERN.match(stem)
-    if match:
-        return match.group("base"), int(match.group("version"))
-    return stem, 1
-
-
-def _next_version_name(filename: str) -> str:
-    base, version = _split_version(filename)
-    return f"{base}.v{version + 1}.pdf"
-
-
 def _when(iso: str) -> str:
     try:
         return datetime.fromisoformat(iso).strftime("%b %-d, %H:%M")
     except ValueError:
         return iso[:19]
+
+
+_KNOWLEDGE_PATH = Path(__file__).resolve().parents[1] / "rule_knowledge.json"
+try:
+    _RULE_WHY: dict[str, str] = {
+        rule_id: str(entry.get("why_it_matters") or "").strip()
+        for rule_id, entry in json.loads(_KNOWLEDGE_PATH.read_text(encoding="utf-8")).get("rules", {}).items()
+        if isinstance(entry, dict)
+    }
+except Exception:
+    _RULE_WHY = {}
+
+
+def _why_snippet(rule_id: str | None) -> str:
+    """First sentence of the educator-authored why-it-matters copy."""
+    why = _RULE_WHY.get(rule_id or "", "")
+    if not why:
+        return ""
+    first = re.split(r"(?<=[.!?])\s", why, maxsplit=1)[0].strip()
+    return first
+
+
+def _educator_display_name(document: dict[str, Any]) -> str:
+    """A friendly name for educator-facing pages; never an internal fixture name."""
+    if document.get("source_kind") == "bundled_synthetic_fixture" or "coastline-synthetic" in document.get("filename", ""):
+        return "Sample course handout"
+    return _split_version(document["filename"])[0] + ".pdf"
 
 
 def _load_partner_ads() -> dict[str, Any] | None:
@@ -210,6 +219,18 @@ def _app_shell(current: str, content: str, signed_in: bool = False, dev: bool = 
     <main id=main-content class=main-workspace tabindex="-1">{content}</main></div>'''
 
 
+def _educator_shell(content: str, persona: str) -> str:
+    """The simplified shell for the three-step educator flow: logo, persona,
+    sign out. No rail, no environment notes — nothing but the path forward."""
+    persona_block = f'<div class=persona><span class=persona-mark aria-hidden=true>{escape(persona[:1])}</span><div><strong>{escape(persona)}</strong><p>Signed in</p></div></div>' if persona else ""
+    return f'''<a class=skip-link href="#main-content">Skip to main content</a><div class=app-shell>
+    <aside class=sidebar><a class=brand href="/app"><img src="/assets/coastline-college-logo-white.png" alt="Coastline College"></a>
+    <div class=product-lockup><span>Coastline College</span><strong>Accessibility Hub</strong></div>
+    {persona_block}
+    <form class=signout method=post action="/logout"><button>Sign out</button></form></aside>
+    <main id=main-content class=main-workspace tabindex="-1">{content}</main></div>'''
+
+
 def _html_page(title: str, body: str, head: str = "") -> bytes:
     css = """
     :root { /* Brand tokens — swap hexes here to retune the brand */ --brand:#F0563F; --brand-deep:#CF3A24; --brand-press:#B0301C; --navy:#FFFFFF; --sky:#ECE9E6; --ink:#232A33; --ink-soft:#3A434E; --muted:#5C6670; --canvas:#FFFFFF; --wash:#FAFAF8; --surface:#fff; --line:#ECE9E6; --line-strong:#D9D4CF; --cream:#FFF6EE; --blush:#FFE3D6; --blush-line:#F3CDBB; --sun:#FFC94D; --teal:#0E7C66; --attention:#A83224; --attention-soft:#FBE2DC; --review:#0C6172; --review-soft:#DDF0F2; --success:#1D6E4C; --success-soft:#DFF2E6; --success-line:#B7DFC6; --neutral:#565E68; --neutral-soft:#ECEDEF; --display:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --shadow:0 8px 24px rgba(35,42,51,.06); }
@@ -230,11 +251,20 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .fixlab { position:sticky; top:24px; padding:24px; border:1px solid var(--line); border-top:4px solid var(--brand); border-radius:16px; background:white; box-shadow:var(--shadow) } .fixlab h2 { font-size:22px } .fixlab p { margin-top:7px; color:var(--muted); font-size:13px } label { display:block; margin:15px 0 6px; color:var(--ink); font-size:13px; font-weight:760 } input,select { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--line-strong); border-radius:10px; background:white } input[type=checkbox] { width:auto; margin-right:7px } details { margin-top:12px; padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } summary { color:var(--ink); cursor:pointer; font-weight:760 } .advanced { margin-top:18px }
     .completeness { border-style:dashed; background:var(--wash) } .completeness ul { margin:8px 0 0; padding-left:19px; color:var(--muted); font-size:12px } .completeness li { margin:4px 0 }
     .block-row { margin:10px 0; padding:9px 11px; border:1px solid var(--line); border-radius:10px; background:white } .block-row label { margin:0 0 4px; font-size:11px; letter-spacing:.09em; text-transform:uppercase } .block-row select { min-height:36px; padding:6px 8px; font-size:13px } .block-preview { display:block; margin-top:5px; color:var(--muted); font-size:12px }
-    .progress-card { max-width:760px; margin:34px auto; padding:38px; text-align:center } .progress-orb { position:relative; display:grid; place-items:center; width:72px; height:72px; margin:0 auto 20px; border:8px solid var(--blush); border-top-color:var(--brand); border-radius:50%; animation:spin 1.1s linear infinite } .progress-orb:after { content:""; width:26px; height:34px; border:2px solid var(--brand-deep); border-radius:6px; background:white } .progress-list { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:26px 0 0; padding:0; list-style:none; text-align:left } .progress-list li { padding:13px; color:var(--muted); border:1px solid var(--line); border-radius:12px; background:var(--wash); font-size:12px } .progress-list li strong { display:block; color:var(--ink); font-size:13px } .progress-list li.active { border-color:var(--blush-line); background:var(--blush) }
+    .progress-card { max-width:760px; margin:34px auto; padding:38px; text-align:center } .progress-orb { position:relative; display:grid; place-items:center; width:72px; height:72px; margin:0 auto 20px; border:8px solid var(--blush); border-top-color:var(--brand); border-radius:50%; animation:spin 1.1s linear infinite } .progress-orb:after { content:""; width:26px; height:34px; border:2px solid var(--brand-deep); border-radius:6px; background:white } .progress-list { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:26px 0 0; padding:0; list-style:none; text-align:left } .progress-list li { padding:13px; color:var(--muted); border:1px solid var(--line); border-radius:12px; background:var(--wash); font-size:12px } .progress-list li strong { display:block; color:var(--ink); font-size:13px } .progress-list li.active { border-color:var(--blush-line); background:var(--blush) } .progress-list li.done { border-color:var(--success-line); background:var(--success-soft) } .progress-list li.done strong { color:var(--success) }
     .completion { display:flex; gap:14px; align-items:flex-start; margin-bottom:20px; padding:20px 22px; color:var(--success); border:1px solid var(--success-line); border-radius:16px; background:var(--success-soft) } .completion-mark { flex:0 0 auto; display:grid; place-items:center; width:36px; height:36px; color:white; border-radius:12px; background:var(--success); font-weight:900 } .completion h2 { color:var(--success); font-size:21px } .completion p { margin-top:4px; color:var(--success) }
     .sso-caption { margin-top:9px; color:var(--muted); font-size:14px } .login-divider { display:flex; align-items:center; gap:12px; margin:20px 0 4px; color:var(--muted); font-size:14px; font-weight:800; letter-spacing:.12em; text-transform:uppercase } .login-divider:before,.login-divider:after { content:""; flex:1; height:1px; background:var(--line) }
     #upload-file { padding:12px; border-style:dashed; background:var(--wash); cursor:pointer } #upload-file::file-selector-button { margin-right:12px; min-height:38px; padding:6px 16px; color:var(--ink); border:1px solid var(--ink); border-radius:999px; background:white; font:inherit; font-weight:800; cursor:pointer }
     .sample-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:18px; padding-top:18px; border-top:1px dashed var(--line-strong) } .sample-row p { margin:0; color:var(--muted) }
+    .drop-hero { max-width:820px; margin:18px auto 0; padding:44px clamp(22px,5vw,56px); text-align:center } .drop-hero h1 { margin:0 auto } .drop-hero .lead { margin:14px auto 0 } .drop-hero form { position:relative; z-index:1 } .drop-hero #upload-file { margin-top:26px; padding:36px 18px; border-width:2px; border-radius:16px; text-align:center } .drop-hero .actions { justify-content:center }
+    .recent-quiet { max-width:820px; margin:28px auto 0 } .recent-quiet h2 { color:var(--muted); font-size:14px; font-weight:800; letter-spacing:.1em; text-transform:uppercase } .recent-list { margin:8px 0 0; padding:0; list-style:none } .recent-list li { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:8px 14px; padding:10px 2px; border-bottom:1px solid var(--line); font-size:14px } .recent-list a { color:var(--ink); font-weight:700; text-decoration-color:var(--line-strong); text-underline-offset:3px } .recent-list li span { color:var(--muted) }
+    .sample-footer { max-width:820px; margin:20px auto 0; color:var(--muted); font-size:14px; text-align:center } .sample-footer p { color:var(--muted) } .link-button { display:inline; min-height:0; padding:0; color:var(--brand-deep); border:0; border-radius:0; background:none; font-size:inherit; font-weight:800; text-decoration:underline; text-underline-offset:3px; cursor:pointer } .link-button:hover { color:var(--brand-press); background:none; border:0; box-shadow:none; transform:none }
+    .flow-hero { max-width:820px; margin:6px auto 0; text-align:center } .flow-hero .lead { margin:12px auto 0 } .flow-wrap { max-width:820px; margin:0 auto }
+    .ready-card { margin-top:24px; padding:34px; text-align:center; border-top:4px solid var(--brand) } .ready-card .seal-badge { margin:22px auto 0 } .ready-download { min-height:54px; padding:13px 30px; font-size:17px } .ready-actions { display:flex; flex-wrap:wrap; gap:14px; align-items:center; justify-content:center; margin:28px auto 8px } .quiet-link { color:var(--muted); font-size:14px; text-underline-offset:3px }
+    .insights { display:grid; gap:14px; margin:22px auto 0 } .insight-card { border-radius:16px } .insight-head { display:flex; align-items:center; gap:12px } .insight-head h2 { font-size:19px } .icon-chip { flex:0 0 auto; display:grid; place-items:center; width:38px; height:38px; border-radius:12px; font-weight:900 } .insight-improved .icon-chip { color:var(--success); background:var(--success-soft) } .insight-look .icon-chip { color:var(--review); background:var(--review-soft) } .insight-verified .icon-chip { color:var(--success); background:var(--success-soft) } .insight-unchecked .icon-chip { color:var(--neutral); background:var(--neutral-soft) }
+    .improve-list { display:grid; gap:10px; margin:16px 0 0; padding:0; list-style:none } .improve-list li { padding:14px 16px; border:1px solid var(--success-line); border-left:4px solid var(--success); border-radius:12px; background:var(--success-soft); text-align:left } .improve-list strong { color:var(--success) } .improve-list p { margin-top:3px; color:var(--ink-soft); font-size:14px }
+    .look-list { display:grid; gap:10px; margin:16px 0 0; padding:0; list-style:none } .look-list li { padding:13px 16px; border:1px solid var(--line); border-radius:12px; background:var(--wash); text-align:left } .look-list strong { color:var(--ink) } .look-list p { margin-top:3px; color:var(--muted); font-size:14px }
+    .chip-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px } .unchecked-strip { margin-top:12px; color:var(--muted); font-size:14px }
     .persona { display:flex; gap:10px; align-items:center; margin:18px 8px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } .persona-mark { flex:0 0 auto; display:grid; place-items:center; width:30px; height:30px; color:white; border-radius:50%; background:var(--brand-deep); font-weight:850 } .persona>div { min-width:0 } .persona strong { display:block; color:var(--ink); font-size:14px } .persona p { color:var(--muted); font-size:14px }
     .sponsor-card { max-width:760px; margin:18px auto 0; background:var(--wash) } .sponsor-top { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px } .sponsor-label { display:inline-flex; align-items:center; padding:4px 12px; color:white; border-radius:999px; background:var(--ink); font-size:14px; font-weight:850; letter-spacing:.08em; text-transform:uppercase } .sponsor-disclosure { color:var(--muted); font-size:14px } .sponsor-tagline { margin-top:4px; color:var(--brand-press); font-size:14px; font-weight:800 } .sponsor-message { margin-top:8px; color:var(--ink-soft) } .sponsor-cta { display:inline-flex; align-items:center; margin-top:12px; padding:7px 14px; color:var(--brand-press); border:1px solid var(--blush-line); border-radius:999px; background:var(--blush); font-size:14px; font-weight:800 } .sponsor-note { margin-top:12px; color:var(--muted); font-size:14px }
     .sponsor-progress { position:relative; height:4px; margin-top:14px; border-radius:999px; background:var(--blush); overflow:hidden } .sponsor-progress:after { content:""; position:absolute; top:0; bottom:0; left:0; width:34%; border-radius:999px; background:var(--brand); animation:sweep 2.4s ease-in-out infinite alternate } @keyframes sweep { from { transform:translateX(-20%) } to { transform:translateX(220%) } }
@@ -392,6 +422,118 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             current = repository.document(TENANT_ID, parent_id) if parent_id else None
         return False
 
+    def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str):
+        """Steps 2 and 3 of the educator flow: one processing screen, one ready
+        screen. The pipeline moves the teacher forward with no clicks at all."""
+        document_id = document["id"]
+        display = _educator_display_name(document)
+        job = repository.latest_job(TENANT_ID, document_id)
+        job_state = job["state"] if job else "queued"
+        if job_state == "succeeded":
+            child = repository.latest_child(TENANT_ID, document_id)
+            if child is not None:
+                # The pipeline improved this one on a copy; carry the teacher
+                # forward to the newest version without a click.
+                return _redirect(start_response, f"/documents/{child['id']}")
+        if job_state not in {"succeeded", "failed"}:
+            verifying = bool(document.get("parent_document_id"))
+            status_line = "Verifying the new copy…" if verifying else "Reading your document…"
+            stages = (
+                ("Reading your document", "A careful automatic review", "done" if verifying else "active"),
+                ("Applying safe improvements", "Only a copy is ever changed", "done" if verifying else ""),
+                ("Verifying the new copy", "A fresh review of the result", "active" if verifying else ""),
+            )
+            items = "".join(f'<li class="{state}"><strong>{escape(label)}</strong>{escape(hint)}</li>' for label, hint, state in stages)
+            progress = f'''<div class=workspace-inner><div class=flow-wrap>
+            <section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div>
+            <p class=eyebrow>Step 2 of 3</p><h2>{escape(status_line)}</h2>
+            <p>{escape(display)} · This page updates by itself every few seconds.</p>
+            <ol class=progress-list>{items}</ol></section>
+            {_sponsored_card()}</div></div>'''
+            return _response(start_response, "200 OK", _html_page("Transforming your document — Accessibility Hub",
+                             _educator_shell(progress, persona), "<meta http-equiv=\"refresh\" content=\"5\">"))
+        result = (job or {}).get("result")
+        if job_state == "failed" or not result:
+            content = f'''<div class=workspace-inner><div class=flow-wrap><section class="panel ready-card">
+            <p class=eyebrow>Not this time</p><h1>We could not finish this one.</h1>
+            <p class=lead>Your file is unchanged. Try again with a fresh export from the original source, or start with the sample document.</p>
+            <div class=ready-actions><a class=button href="/app">Try another document <span aria-hidden=true>→</span></a>
+            <a class=quiet-link href="/documents/{escape(document_id)}?view=advanced">Advanced tools</a></div></section></div></div>'''
+            return _response(start_response, "200 OK", _html_page("Accessibility Hub", _educator_shell(content, persona)))
+
+        # ---- Step 3: ready ------------------------------------------------
+        improvements: list[tuple[str, str]] = []
+        for row in repository.remediations(TENANT_ID, document_id):
+            if row["kind"] == "seal":
+                continue
+            if row["kind"] == "metadata":
+                for action in (row.get("provenance") or {}).get("actions", []):
+                    if action.get("rule_id") == "PDF.METADATA.TITLE":
+                        improvements.append(("Title added", f"Screen readers now announce “{action.get('value') or ''}” instead of a filename."))
+                    elif action.get("rule_id") == "PDF.METADATA.LANGUAGE":
+                        value = str(action.get("value") or "")
+                        language = "English (US)" if value == "en-US" else value
+                        improvements.append((f"Language set to {language}", "Assistive technology can now pick the right voice and pronunciation."))
+            else:
+                improvements.append((REMEDIATION_LABELS.get(row["kind"], row["kind"]),
+                                     "Applied to this copy, with a full record of the change."))
+        improved_section = ""
+        if improvements:
+            cards = "".join(f"<li><strong>{escape(title)}</strong><p>{escape(detail)}</p></li>" for title, detail in improvements)
+            improved_section = f'''<section class="panel insight-card insight-improved" aria-labelledby=improved-heading>
+            <div class=insight-head><span class=icon-chip aria-hidden=true>✓</span><h2 id=improved-heading>What we improved</h2></div>
+            <ul class=improve-list>{cards}</ul>
+            <p class=small>Improvements were applied to a copy. Your original file is untouched.</p></section>'''
+        look_items = []
+        for signal in result.get("signals", []):
+            # Anything still open belongs in front of a person — the ready page
+            # never hides a needs-attention finding behind the download button.
+            if signal.get("lane") in {"needs_attention", "review_recommended"}:
+                why = _why_snippet(signal.get("rule_id")) or str(signal.get("evidence") or "")
+                look_items.append((str(signal.get("title") or "Worth a look"), why))
+        look_section = ""
+        if look_items:
+            cards = "".join(f"<li><strong>{escape(title)}</strong><p>{escape(why)}</p></li>" for title, why in look_items)
+            look_section = f'''<section class="panel insight-card insight-look" aria-labelledby=look-heading>
+            <div class=insight-head><span class=icon-chip aria-hidden=true>?</span><h2 id=look-heading>Worth a human look</h2></div>
+            <ul class=look-list>{cards}</ul></section>'''
+        verified_titles = [str(s.get("title") or "") for s in result.get("signals", []) if s.get("lane") == "verified_signal"]
+        verified_section = ""
+        if verified_titles:
+            chips = "".join(f'<span class=verified_signal><span class=chip>{escape(title)}</span></span>' for title in verified_titles if title)
+            verified_section = f'''<section class="panel insight-card insight-verified" aria-labelledby=verified-heading>
+            <div class=insight-head><span class=icon-chip aria-hidden=true>✓</span><h2 id=verified-heading>Verified in your document</h2></div>
+            <div class=chip-row>{chips}</div></section>'''
+        unchecked_titles = [str(s.get("title") or "") for s in result.get("signals", []) if s.get("lane") == "not_assessed"]
+        completeness = [str(note) for note in (result.get("completeness") or [])]
+        strip = " · ".join(title for title in unchecked_titles if title) or "Contrast, tables, forms, and color-only meaning"
+        completeness_note = f'<p class=small>{escape(" ".join(completeness))}</p>' if completeness else ""
+        unchecked_section = f'''<section class="panel insight-card insight-unchecked" aria-labelledby=unchecked-heading>
+        <div class=insight-head><span class=icon-chip aria-hidden=true>–</span><h2 id=unchecked-heading>Not checked by this tool</h2></div>
+        <p class=unchecked-strip>{escape(strip)}. These are judgment calls this tool leaves to a person.</p>{completeness_note}</section>'''
+        if _seal_available():
+            download = f'<a class="button ready-download" href="/documents/{escape(document_id)}/produced">Download your document <span aria-hidden=true>↓</span></a>'
+        else:
+            download = '<button disabled aria-disabled=true>Download is not available yet</button>'
+        badge = (
+            '<div class=seal-badge role=img aria-label="Reviewed &amp; improved with Coastline College Accessibility Hub — a review record, not a certification">'
+            '<span>Reviewed &amp; improved</span><strong>Coastline College Accessibility Hub</strong>'
+            f'<span class=seal-fineprint>{escape(datetime.now().strftime("%b %d, %Y"))}</span>'
+            f'<span class=seal-fineprint>{escape(document["sha256"][:10])}…</span></div>'
+        )
+        content = f'''<div class=workspace-inner><div class=flow-wrap>
+        <section class="panel ready-card" aria-labelledby=ready-heading><p class=eyebrow>Step 3 of 3</p>
+        <h1 id=ready-heading>Your document is ready.</h1>
+        <p class=lead>{escape(display)} — reviewed, with the final page carrying the review record.</p>
+        <div class=ready-actions>{download}</div>
+        {badge}
+        <p class=small>A review record, not a certification.</p></section>
+        <div class=insights>{improved_section}{look_section}{verified_section}{unchecked_section}</div>
+        <div class=ready-actions><a class="button secondary" href="/app">Transform another document <span aria-hidden=true>→</span></a>
+        <a class=quiet-link href="/documents/{escape(document_id)}?view=advanced">Advanced tools</a></div>
+        </div></div>'''
+        return _response(start_response, "200 OK", _html_page("Your document is ready — Accessibility Hub", _educator_shell(content, persona)))
+
     def app(environ: dict[str, Any], start_response: Callable):
         path, method = environ.get("PATH_INFO", "/"), environ.get("REQUEST_METHOD", "GET")
         if path == "/assets/coastline-college-logo-white.png" and method == "GET":
@@ -443,6 +585,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         persona = (session or {}).get("display") or ""
         actor = (session or {}).get("actor") or ACTOR_ID
         dev = settings.environment == "development"
+        # The three-step educator flow exists only for the demo SSO session in
+        # development. Access-code sessions — and every hosted environment —
+        # keep the classic surface byte-for-byte.
+        educator = dev and settings.synthetic_intake_ready and signed_in and actor == SSO_ACTOR
         if not settings.public_access and not signed_in:
             return _redirect(start_response, "/login")
         if path in {"/", "/app"} and method == "GET":
@@ -469,6 +615,33 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 root = _root_of(doc)
                 entry = lineages.setdefault(root["id"], {"root": root, "latest": doc, "count": 0})
                 entry["count"] += 1
+            if educator:
+                # The three-step landing: one hero, one drop zone, one button.
+                recent_rows = ""
+                for entry in lineages.values():
+                    latest = entry["latest"]
+                    recent_rows += (
+                        f'<li><a href="/documents/{escape(latest["id"])}">{escape(_educator_display_name(entry["root"]))}</a>'
+                        f'<span>{escape(_when(latest["created_at"]))}</span></li>'
+                    )
+                recent = (
+                    f'<section class=recent-quiet aria-labelledby=recent-heading><h2 id=recent-heading>Recent</h2>'
+                    f'<ul class=recent-list>{recent_rows}</ul></section>'
+                ) if recent_rows else ""
+                drop = f'''<div class=workspace-inner>
+                <section class="panel hero-card drop-hero" aria-labelledby=drop-heading><div class=hero-copy>
+                <p class=eyebrow>Three simple steps</p>
+                <h1 id=drop-heading>Make your course material ready for students.</h1>
+                <p class=lead>Drop in a PDF (up to 50&nbsp;MB). We review it, apply safe improvements to a copy, and hand back a version that is ready to share.</p>
+                <form method=post action="/documents/upload" enctype="multipart/form-data">
+                <label for=upload-file>Course material (PDF)</label>
+                <input id=upload-file type=file name=file accept="application/pdf,.pdf" required>
+                <div class=actions><button class=ready-download>Transform my document <span aria-hidden=true>→</span></button></div>
+                </form></div></section>
+                {recent}
+                <form class=sample-footer method=post action="/documents/synthetic"><input type=hidden name=fixture value=handout><p>No file handy? <button class=link-button>Try a sample document.</button></p></form>
+                </div>'''
+                return _response(start_response, "200 OK", _html_page("Accessibility Hub — Ready for students", _educator_shell(drop, persona)))
             rows = ""
             for entry in lineages.values():
                 latest, root = entry["latest"], entry["root"]
@@ -478,18 +651,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 versions_note = f"<span>{entry['count']} versions</span>" if entry["count"] > 1 else ""
                 rows += f"<li><a href=\"/documents/{escape(latest['id'])}\"><strong>{escape(display)}</strong></a><div class=meta><span class=tag>v{version}</span><span class=tag>{escape(state)}</span>{versions_note}<span>{escape(_when(latest['created_at']))}</span></div></li>"
             rows = rows or "<li class=empty-state>No review has started yet. Begin with the card above.</li>"
-            educator_session = dev and settings.synthetic_intake_ready and actor == SSO_ACTOR
-            if educator_session:
-                # Development only, and only for the demo educator sign-in:
-                # real local upload, with the samples demoted to a secondary
-                # "or try a sample" row. Access-code sessions keep the classic
-                # synthetic-only workspace in every environment, so the smoke
-                # boundary checks hold verbatim against a dev instance.
-                hero = '''<section class="panel hero-card" aria-labelledby=start-heading><div class=hero-copy><p class=eyebrow>1 · Review</p><h2 id=start-heading>Upload your course material</h2><p class=lead>Choose a PDF from your computer (up to 50 MB). It stays on this machine, and the review starts right away.</p>
-                <form method=post action="/documents/upload" enctype="multipart/form-data"><label for=upload-file>Course material (PDF)</label><input id=upload-file type=file name=file accept="application/pdf,.pdf" required><div class=actions><button>Upload and review <span aria-hidden=true>→</span></button></div></form>
-                <div class=sample-row><p>Or try a sample:</p><form method=post action="/documents/synthetic"><button class=secondary name=fixture value=handout>Try the course handout</button></form><form method=post action="/documents/synthetic"><button class=secondary name=fixture value=scan>Try the scanned sample</button></form></div></div></section>'''
-                status_pill = "Local development workspace"
-            elif settings.synthetic_intake_ready:
+            if settings.synthetic_intake_ready:
                 primary_action = '<form method=post action="/documents/synthetic"><button name=fixture value=handout>Start a sample review <span aria-hidden=true>→</span></button></form>'
                 secondary_action = '<form method=post action="/documents/synthetic"><button class=secondary name=fixture value=scan>Try the scanned sample</button></form>'
                 # Honest note per session: a development access-code session
@@ -504,7 +666,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 locked = '<div class=locked><h3>Hosted controls are not connected</h3><p>Private storage, scan gate, isolated worker, tenant authorization, lifecycle, and audit integrations must be configured before a hosted process can begin.</p></div>'
                 hero = f'''<section class="panel hero-card" aria-labelledby=start-heading><div class=hero-copy><p class=eyebrow>1 · Review</p><h2 id=start-heading>Choose a sample</h2><p class=lead>Use the course handout for metadata and structure signals, or the scanned handout to review an OCR text layer.</p><div class=actions>{locked}</div><div class=upload-note><span aria-hidden=true>🔒</span><div><strong>Real-document upload is not available in this environment.</strong><br>Real, institutional, and public uploads are not accepted — only the bundled synthetic samples.</div></div></div></section>'''
                 status_pill = "Safe sample workspace"
-            content = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow>Accessibility Hub</p><h1>See what to improve. Keep what already works.</h1><p class=lead>{'Upload a handout, review clear signals, make one intentional change, then verify the new version.' if educator_session else 'Start with a supplied handout, review clear signals, make one intentional change, then verify the new version.'}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>{status_pill}</span></header>
+            content = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow>Accessibility Hub</p><h1>See what to improve. Keep what already works.</h1><p class=lead>Start with a supplied handout, review clear signals, make one intentional change, then verify the new version.</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>{status_pill}</span></header>
             {hero}
             <section aria-labelledby=recent-heading><div class=section-heading><div><p class=eyebrow>Workspace</p><h2 id=recent-heading>Document records</h2></div><p class=small>One row per document. Improved copies appear as new versions of the same row.</p></div><ul class=queue>{rows}</ul></section></div>'''
             return _response(start_response, "200 OK", _html_page("Accessibility Hub staging", _app_shell("add", content, signed_in, dev, persona)))
@@ -541,7 +703,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             if message is not None:
                 return _response(start_response, "400 Bad Request", _simple_page("Upload needs a closer look", f"<div class=shell><section class=locked><h2>This file was not uploaded.</h2><p>{escape(message)}</p><p><a href=\"/app\">Back to the workspace</a></p></section></div>"))
             item = repository.create_document(TENANT_ID, filename, "educator_upload", payload)
-            job_id = repository.enqueue(item["id"])
+            # The educator flow runs the full pipeline in one pass: assess, then
+            # auto-apply the safe title/language fix on a copy, then re-assess.
+            job_id = repository.enqueue(item["id"], kind="pipeline")
             repository.audit(TENANT_ID, actor, "educator_document_uploaded", item["id"], {"job_id": job_id, "source": item["source_kind"], "bytes": len(payload)})
             return _redirect(start_response, f"/documents/{item['id']}")
         if path == "/documents/synthetic" and method == "POST":
@@ -556,7 +720,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 return _response(start_response, "400 Bad Request", _simple_page("Choose a sample", "<div class=shell><section class=locked><h2>Choose one of the supplied samples.</h2><p><a href=\"/app\">Back to the workspace</a></p></section></div>"))
             filename, factory = fixtures[fixture]
             item = repository.create_document(TENANT_ID, filename, "bundled_synthetic_fixture", factory())
-            job_id = repository.enqueue(item["id"])
+            # Educator sessions get the same three-step pipeline on the sample;
+            # access-code sessions keep the classic assess-only job.
+            job_id = repository.enqueue(item["id"], kind="pipeline" if educator else "assessment")
             repository.audit(TENANT_ID, actor, "synthetic_document_created", item["id"], {"job_id": job_id, "source": item["source_kind"]})
             return _redirect(start_response, f"/documents/{item['id']}")
         if path.startswith("/documents/"):
@@ -565,6 +731,8 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             document = repository.document(TENANT_ID, document_id)
             if document is None:
                 return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Document not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
+            if len(pieces) == 2 and method == "GET" and educator and "view=advanced" not in environ.get("QUERY_STRING", ""):
+                return _educator_document_view(start_response, document, persona)
             if len(pieces) == 2 and method == "GET":
                 job = repository.latest_job(TENANT_ID, document_id)
                 result = job.get("result") if job else None
@@ -661,8 +829,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     return _redirect(start_response, f"/documents/{document_id}")
                 # Mirror the produce-card eligibility exactly: a first review
                 # that still has needs-attention signals cannot be produced by
-                # visiting the URL directly.
-                if not (bool(document.get("parent_document_id")) or _lane_counts(job["result"])["needs_attention"] == 0):
+                # visiting the URL directly. The educator flow's ready page is
+                # exempt — its final version downloads with the honest review
+                # record regardless, and the record itself lists what remains.
+                if not educator and not (bool(document.get("parent_document_id")) or _lane_counts(job["result"])["needs_attention"] == 0):
                     return _response(start_response, "409 Conflict", _simple_page("Not ready to produce", f"<div class=shell><section class=locked><h2>This version is not ready to produce.</h2><p>Some signals still need attention. Apply the suggested fixes and recheck, then produce the improved copy.</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"))
                 try:
                     from tina.seal import append_review_summary
@@ -698,9 +868,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         "result_sha256": seal_provenance.get("result_sha256"),
                     })
                 safe_base = re.sub(r"[^A-Za-z0-9._ ()-]+", "-", _split_version(document["filename"])[0]).strip(" .-") or "document"
+                suffix = "ready" if educator else "sealed"
                 start_response("200 OK", [
                     ("Content-Type", "application/pdf"),
-                    ("Content-Disposition", f'attachment; filename="{safe_base}.sealed.pdf"'),
+                    ("Content-Disposition", f'attachment; filename="{safe_base}.{suffix}.pdf"'),
                     ("Content-Length", str(len(sealed))),
                     ("Cache-Control", "no-store"),
                     ("X-Content-Type-Options", "nosniff"),

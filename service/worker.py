@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -10,6 +11,38 @@ from typing import Any
 from check_pdf import analyze
 
 from service.repository import StagingRepository
+
+# Rules the educator pipeline may resolve automatically — metadata only, ever.
+AUTO_FIX_RULES = frozenset({"PDF.METADATA.TITLE", "PDF.METADATA.LANGUAGE"})
+AUTO_FIX_LANGUAGE = "en-US"
+
+_VERSION_PATTERN = re.compile(r"^(?P<base>.+)\.v(?P<version>\d+)$")
+
+
+def split_version(filename: str) -> tuple[str, int]:
+    """('base', N) for base.vN.pdf; legacy '.rechecked' chains collapse to the base."""
+    stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
+    while stem.endswith(".rechecked"):
+        stem = stem[: -len(".rechecked")]
+    match = _VERSION_PATTERN.match(stem)
+    if match:
+        return match.group("base"), int(match.group("version"))
+    return stem, 1
+
+
+def next_version_name(filename: str) -> str:
+    base, version = split_version(filename)
+    return f"{base}.v{version + 1}.pdf"
+
+
+def pipeline_title(filename: str, source_kind: str) -> str:
+    """Prettified filename for the automatic title fix: strip the extension,
+    turn dashes/underscores into spaces, and title-case each word."""
+    if source_kind == "bundled_synthetic_fixture":
+        return "Week 3 Course Handout"
+    base = split_version(filename)[0]
+    words = re.sub(r"[-_]+", " ", base).strip()
+    return " ".join(word[:1].upper() + word[1:] for word in words.split()) or "Course Handout"
 
 
 LANES = {
@@ -179,16 +212,56 @@ class AssessmentWorker:
             return False
         try:
             with self.repository._connect() as db:  # Worker resolves tenant from the persisted document, never request input.
-                row = db.execute("SELECT tenant_id FROM documents WHERE id=?", (job["document_id"],)).fetchone()
+                row = db.execute("SELECT * FROM documents WHERE id=?", (job["document_id"],)).fetchone()
             if row is None:
                 raise RuntimeError("job document no longer exists")
-            payload = self.repository.document_bytes(row["tenant_id"], job["document_id"])
+            document = dict(row)
+            payload = self.repository.document_bytes(document["tenant_id"], job["document_id"])
             with tempfile.TemporaryDirectory(prefix="hub-staging-assessment-") as temp_dir:
                 root = Path(temp_dir)
                 pdf = root / "synthetic.pdf"
                 pdf.write_bytes(payload)
                 result = normalize_report(analyze(pdf, root / "evidence"))
+            if job["kind"] == "pipeline":
+                # Chain the safe improvement BEFORE this job turns terminal so
+                # a refreshing status page always finds the improved copy the
+                # moment the first assessment lands.
+                self._apply_pipeline_improvement(document, payload, result)
             self.repository.finish_job(job["id"], result=result)
         except Exception as error:  # Do not leak parser diagnostics to browser clients.
             self.repository.finish_job(job["id"], error_code=f"assessment_failed:{type(error).__name__}")
         return True
+
+    def _apply_pipeline_improvement(self, document: dict[str, Any], payload: bytes, result: dict[str, Any]) -> None:
+        """Auto-apply ONLY the title/language metadata fix, on a copy, with full
+        provenance — exactly what the manual one-click path records. Anything
+        else stays a human decision. Improved copies (they have a parent) are
+        only re-assessed, never re-improved, so the chain always terminates.
+        """
+        if document.get("parent_document_id"):
+            return
+        defects = {
+            signal.get("rule_id")
+            for signal in result.get("signals", [])
+            if signal.get("lane") in {"needs_attention", "review_recommended"}
+        } & AUTO_FIX_RULES
+        if not defects:
+            return
+        from tina.remedy import MetadataRemediation
+        title = pipeline_title(document["filename"], document["source_kind"]) if "PDF.METADATA.TITLE" in defects else None
+        language = AUTO_FIX_LANGUAGE if "PDF.METADATA.LANGUAGE" in defects else None
+        try:
+            fixed, provenance = MetadataRemediation.with_builtin_tools().apply(
+                document["filename"], payload, title=title, language=language)
+        except Exception:
+            # The improvement is best-effort: a copy that cannot be improved
+            # safely still gets its honest assessment, nothing more.
+            return
+        child = self.repository.create_document(
+            document["tenant_id"], next_version_name(document["filename"]),
+            "synthetic_remediated_copy", fixed, parent_document_id=document["id"])
+        self.repository.record_remediation(child["id"], document["id"], "metadata", provenance)
+        job_id = self.repository.enqueue(child["id"], kind="pipeline")
+        self.repository.audit(document["tenant_id"], "automated-pipeline", "remediation_applied", child["id"], {
+            "parent": document["id"], "kind": "metadata", "job_id": job_id, "provenance": provenance,
+        })

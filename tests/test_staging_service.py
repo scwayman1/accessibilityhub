@@ -1,11 +1,25 @@
 import io
 import json
+import re
 import shutil
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from urllib.parse import urlencode
+
+
+def visible_text(page: bytes) -> str:
+    """The text a teacher can actually read: no styles, no tags, lowercased."""
+    text = page.decode("utf-8", "replace")
+    text = re.sub(r"<style.*?</style>", " ", text, flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return text.lower()
+
+
+# Words that must never appear on an educator-facing page (drop, processing,
+# ready). The classic access-code surface keeps its honest environment labels.
+SCRUBBED_WORDS = ("synthetic", "development", "staging", "workspace")
 
 from service.app import create_app
 from service.repository import StagingRepository
@@ -92,7 +106,8 @@ class StagingServiceTests(unittest.TestCase):
         self.assertIn(b"coastline-college-logo-white.png", self.request("/app")[2])
 
     def test_private_workspace_uses_labeled_workflow_steps_and_finding_chips(self):
-        self.login_sso()
+        # The classic access-code surface keeps the labeled rail and lanes.
+        self.login()
         status, _, workspace = self.request("/app")
         self.assertTrue(status.startswith("200"))
         for label in (b"Review", b"Understand", b"Improve", b"Verify"):
@@ -101,16 +116,8 @@ class StagingServiceTests(unittest.TestCase):
         self.assertIn(b"class=sidebar", workspace)
         self.assertIn(b'href="#main-content"', workspace)
         self.assertEqual(workspace.count(b'aria-current="step"'), 1)
-        # Development mode: the primary card is the real local upload, and the
-        # bundled samples move to a secondary "or try a sample" row.
-        self.assertIn(b"Upload your course material", workspace)
-        self.assertIn(b"type=file", workspace)
-        self.assertIn(b'accept="application/pdf,.pdf"', workspace)
-        self.assertIn(b'enctype="multipart/form-data"', workspace)
-        self.assertIn(b"Or try a sample", workspace)
-        self.assertIn(b"Try the course handout", workspace)
+        self.assertIn(b"Start a sample review", workspace)
         self.assertIn(b"Try the scanned sample", workspace)
-        self.assertIn(b"Development workspace", workspace)
         self.assertIn(b":focus-visible", workspace)
         self.assertIn(b"@media(max-width:900px)", workspace)
         self.assertIn(b".app-shell { grid-template-columns:1fr }", workspace)
@@ -757,12 +764,16 @@ class StagingServiceTests(unittest.TestCase):
         self.assertEqual(self.repository.document_bytes("coastline-staging", document_id), pdf)
         job = self.wait_for_result(document_id)
         self.assertEqual(job["state"], "succeeded")
-        _, _, page = self.request(f"/documents/{document_id}")
-        self.assertIn(b"Your upload", page)
-        self.assertIn(b"Apply suggested fixes and recheck", page)
+        # The original upload is never modified in place.
+        self.assertEqual(self.repository.document_bytes("coastline-staging", document_id), pdf)
         with self.repository._connect() as db:
             actions = [row["action"] for row in db.execute("SELECT action FROM audit_events")]
         self.assertIn("educator_document_uploaded", actions)
+        # The classic detail page — with the full Fix Lab — stays reachable
+        # for the educator through the Advanced tools link.
+        _, _, page = self.request(f"/documents/{document_id}?view=advanced")
+        self.assertIn(b"Your upload", page)
+        self.assertIn(b"Signals and next actions", page)
 
     def test_dev_access_code_session_keeps_the_synthetic_only_workspace(self):
         # The smoke script signs in with the access code against a dev
@@ -1038,6 +1049,274 @@ class StagingServiceTests(unittest.TestCase):
         self.assertFalse(payload["hosted_intake_enabled"])
         self.assertTrue(payload["synthetic_only"])
         self.cookie = ""
+
+    # ------------------------------------------------------------------
+    # The three-step educator flow: drop page, one-pass improving pipeline,
+    # ready page with insight cards, and the educator copy scrub.
+    # ------------------------------------------------------------------
+
+    def wait_for_pipeline(self, document_id, deadline=12.0):
+        """Wait until the pipeline is fully terminal: the document's job AND,
+        if an improved copy was created, that copy's job too. Returns the
+        final document id (the improved copy when one exists)."""
+        started = time.monotonic()
+        while time.monotonic() - started < deadline:
+            job = self.repository.latest_job("coastline-staging", document_id)
+            if job and job["state"] in {"succeeded", "failed"}:
+                child = self.repository.latest_child("coastline-staging", document_id)
+                if child is None:
+                    return document_id
+                child_job = self.repository.latest_job("coastline-staging", child["id"])
+                if child_job and child_job["state"] in {"succeeded", "failed"}:
+                    return child["id"]
+            time.sleep(0.05)
+        self.fail("pipeline did not reach a terminal state")
+
+    def assert_scrubbed(self, page, context):
+        text = visible_text(page)
+        for word in SCRUBBED_WORDS:
+            self.assertNotIn(word, text, f"'{word}' is visible on the {context} page")
+
+    def test_educator_lands_on_a_single_drop_page_after_sso(self):
+        self.login_sso()
+        status, _, page = self.request("/app")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Make your course material ready for students.", page)
+        self.assertIn(b"Transform my document", page)
+        self.assertIn(b"type=file", page)
+        self.assertIn(b'accept="application/pdf,.pdf"', page)
+        self.assertIn(b'enctype="multipart/form-data"', page)
+        self.assertIn(b'action="/documents/upload"', page)
+        # A tiny footer link to the sample, wired to the existing fixture route.
+        self.assertIn(b"No file handy?", page)
+        self.assertIn(b"Try a sample document.", page)
+        self.assertIn(b'action="/documents/synthetic"', page)
+        # No multistep ceremony: no rail, no document-records table, no lanes.
+        self.assertNotIn(b'aria-current="step"', page)
+        self.assertNotIn(b"Document records", page)
+        self.assertNotIn(b"Start a sample review", page)
+        # No recent list until something exists.
+        self.assertNotIn(b"id=recent-heading", page)
+        self.assert_scrubbed(page, "drop")
+        self.cookie = ""
+
+    def test_educator_drop_page_lists_recent_documents_quietly(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_pipeline(source_id)
+        _, _, page = self.request("/app")
+        self.assertIn(b"Recent", page)
+        self.assertIn(b"id=recent-heading", page)
+        # The fixture never leaks its internal name to a teacher.
+        self.assertIn(b"Sample course handout", page)
+        self.assert_scrubbed(page, "drop")
+        self.cookie = ""
+
+    def test_educator_processing_page_shows_stages_and_sponsor_and_refresh(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.worker.stop()  # Keep the job queued so the processing page is observable.
+        self.login_sso()
+        status, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        self.assertTrue(status.startswith("303"), status)
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        status, _, page = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("Reading your document…".encode(), page)
+        self.assertIn(b"Applying safe improvements", page)
+        self.assertIn(b"Verifying the new copy", page)
+        # The sponsored card runs during processing, never gating results.
+        self.assertIn(b">Sponsored</span>", page)
+        self.assertIn(b"never delay your results", page)
+        # Meta-refresh cadence unchanged; still no scripts.
+        self.assertIn(b'http-equiv="refresh" content="5"', page)
+        self.assertNotIn(b"<script", page)
+        self.assert_scrubbed(page, "processing")
+        # First worker pass: assess + auto-improve; the parent page now moves
+        # the teacher forward to the improved copy without any click.
+        self.assertTrue(self.worker.run_once())
+        status, headers, _ = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("303"), status)
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        self.assertNotEqual(child_id, document_id)
+        # The improved copy is still verifying: stage 3 active, earlier done.
+        status, _, page = self.request(f"/documents/{child_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("Verifying the new copy…".encode(), page)
+        self.assertIn(b'class="done"', page)
+        self.assertIn(b">Sponsored</span>", page)
+        self.assert_scrubbed(page, "processing (verify stage)")
+        # Second worker pass: re-assessment of the copy → terminal, no sponsor.
+        self.assertTrue(self.worker.run_once())
+        status, _, page = self.request(f"/documents/{child_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertNotIn(b'http-equiv="refresh"', page)
+        self.assertIn(b"Your document is ready.", page)
+        self.assertNotIn(b">Sponsored</span>", page)
+        self.cookie = ""
+
+    def test_educator_pipeline_auto_fixes_metadata_with_provenance_and_reassessment(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        pdf = synthetic_handout_pdf()
+        _, headers, _ = self._upload("week 5-handout.pdf", pdf)
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        self.assertNotEqual(final_id, document_id)
+        # Provenance chain: the metadata remediation is recorded on the copy
+        # exactly as the manual path records it.
+        rows = self.repository.remediations("coastline-staging", final_id)
+        self.assertEqual([row["kind"] for row in rows if row["kind"] != "seal"], ["metadata"])
+        provenance = rows[0]["provenance"]
+        self.assertTrue(provenance["mutates_document"])
+        applied = {action["rule_id"]: action for action in provenance["actions"]}
+        self.assertEqual(set(applied), {"PDF.METADATA.TITLE", "PDF.METADATA.LANGUAGE"})
+        # Prettified filename: extension stripped, dashes/underscores to
+        # spaces, title-case.
+        self.assertEqual(applied["PDF.METADATA.TITLE"]["value"], "Week 5 Handout")
+        self.assertEqual(applied["PDF.METADATA.LANGUAGE"]["value"], "en-US")
+        # The re-assessment ran and verified both fixes.
+        final_job = self.repository.latest_job("coastline-staging", final_id)
+        self.assertEqual(final_job["state"], "succeeded")
+        verified = {s["rule_id"] for s in final_job["result"]["signals"] if s["lane"] == "verified_signal"}
+        self.assertIn("PDF.METADATA.TITLE", verified)
+        self.assertIn("PDF.METADATA.LANGUAGE", verified)
+        # Nothing else was changed silently: exactly one derived copy, one
+        # remediation, and the upload's own bytes are untouched.
+        self.assertEqual(self.repository.document_bytes("coastline-staging", document_id), pdf)
+        self.assertIsNone(self.repository.latest_child("coastline-staging", final_id))
+        # The audit trail names the automated actor.
+        with self.repository._connect() as db:
+            row = db.execute("SELECT actor FROM audit_events WHERE action='remediation_applied' ORDER BY created_at DESC").fetchone()
+        self.assertEqual(row["actor"], "automated-pipeline")
+        self.cookie = ""
+
+    def test_educator_ready_page_has_download_seal_and_insight_cards(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        status, _, page = self.request(f"/documents/{final_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Your document is ready.", page)
+        self.assertIn(f'href="/documents/{final_id}/produced"'.encode(), page)
+        # The coral seal badge with the exact existing wording.
+        self.assertIn(b"seal-badge", page)
+        self.assertIn(b"Reviewed &amp; improved", page)
+        self.assertIn(b"A review record, not a certification.", page)
+        # Insight cards.
+        self.assertIn(b"What we improved", page)
+        self.assertIn(b"Title added", page)
+        self.assertIn("“Week 5 Handout”".encode(), page)
+        self.assertIn(b"Language set to English (US)", page)
+        self.assertIn(b"Worth a human look", page)
+        self.assertIn(b"Verified in your document", page)
+        self.assertIn(b"Not checked by this tool", page)
+        # The honest gaps strip names the human-judgment areas.
+        self.assertIn(b"Color-only meaning", page)
+        # Navigation: another round, and the quiet advanced door.
+        self.assertIn(b"Transform another document", page)
+        self.assertIn(f'href="/documents/{final_id}?view=advanced"'.encode(), page)
+        self.assert_scrubbed(page, "ready")
+        # Advanced tools opens the classic detail page with lanes and Fix Lab.
+        status, _, classic = self.request(f"/documents/{final_id}?view=advanced")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Signals and next actions", classic)
+        self.assertIn(b"Remediation provenance", classic)
+        self.cookie = ""
+
+    def test_educator_ready_download_serves_sealed_ready_pdf(self):
+        from pypdf import PdfReader
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        source_bytes = self.repository.document_bytes("coastline-staging", final_id)
+        status, headers, sealed = self.request(f"/documents/{final_id}/produced")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertEqual(headers["Content-Type"], "application/pdf")
+        self.assertIn('filename="week 5-handout.ready.pdf"', headers["Content-Disposition"])
+        self.assertTrue(sealed.startswith(b"%PDF"))
+        source_reader = PdfReader(io.BytesIO(source_bytes))
+        sealed_reader = PdfReader(io.BytesIO(sealed))
+        self.assertEqual(len(sealed_reader.pages), len(source_reader.pages) + 1)
+        final_text = sealed_reader.pages[-1].extract_text() or ""
+        self.assertIn("Reviewed & improved with Coastline College Accessibility Hub", final_text)
+        self.assertIn("A review record, not a certification.", final_text)
+        # Provenance kind "seal" recorded once via the existing machinery.
+        seals = [row for row in self.repository.remediations("coastline-staging", final_id) if row["kind"] == "seal"]
+        self.assertEqual(len(seals), 1)
+        self.assertEqual(self.repository.document_bytes("coastline-staging", final_id), source_bytes)
+        self.cookie = ""
+
+    def test_educator_pipeline_with_nothing_to_fix_goes_straight_to_ready(self):
+        from tina.remedy import MetadataRemediation
+        from service.fixtures import synthetic_handout_pdf
+        clean, _ = MetadataRemediation.with_builtin_tools().apply(
+            "clean.pdf", synthetic_handout_pdf(), title="Week 5 Handout", language="en-US")
+        self.login_sso()
+        _, headers, _ = self._upload("clean-handout.pdf", clean)
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        # Nothing was auto-fixable: no derived copy, no remediation rows.
+        self.assertEqual(final_id, document_id)
+        self.assertEqual(self.repository.remediations("coastline-staging", document_id), [])
+        status, _, page = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Your document is ready.", page)
+        self.assertNotIn(b"What we improved", page)
+        self.assertIn(b"Not checked by this tool", page)
+        self.assert_scrubbed(page, "ready (nothing fixed)")
+        self.cookie = ""
+
+    def test_access_code_sessions_never_get_the_automatic_pipeline(self):
+        # The classic surface's contract is untouched: a sample review is
+        # assess-only, and no copy is ever created without an explicit click.
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        job = self.wait_for_result(document_id)
+        self.assertEqual(job["kind"], "assessment")
+        time.sleep(0.3)  # A pipeline child would be created before terminal; give it every chance.
+        self.assertIsNone(self.repository.latest_child("coastline-staging", document_id))
+        self.assertEqual(self.repository.remediations("coastline-staging", document_id), [])
+
+    def test_educator_pages_never_use_internal_environment_words(self):
+        """COPY SCRUB: 'synthetic', 'development', 'staging', 'workspace' are
+        internal words. A teacher never sees them on the three-step flow."""
+        from service.fixtures import synthetic_handout_pdf
+        self.worker.stop()
+        self.login_sso()
+        surfaces = [("drop", self.request("/app")[2])]
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        surfaces.append(("processing", self.request(f"/documents/{document_id}")[2]))
+        self.assertTrue(self.worker.run_once())
+        self.assertTrue(self.worker.run_once())
+        final_id = self.wait_for_pipeline(document_id)
+        surfaces.append(("ready", self.request(f"/documents/{final_id}")[2]))
+        surfaces.append(("drop with recent list", self.request("/app")[2]))
+        for context, page in surfaces:
+            self.assert_scrubbed(page, context)
+        self.cookie = ""
+
+    def test_new_educator_text_ground_pairs_meet_contrast_contract(self):
+        from tests.test_design_contract import contrast_ratio
+        pairs = (
+            ("#1D6E4C", "#DFF2E6"),  # improved-card heading on success wash
+            ("#3A434E", "#DFF2E6"),  # improved-card body on success wash
+            ("#0C6172", "#DDF0F2"),  # look icon chip on review wash
+            ("#565E68", "#ECEDEF"),  # unchecked icon chip on neutral wash
+            ("#5C6670", "#FFFFFF"),  # quiet link + strips on white
+            ("#5C6670", "#FAFAF8"),  # look-card body on wash
+            ("#CF3A24", "#FFFFFF"),  # sample footer link on white
+            ("#232A33", "#FAFAF8"),  # look-card heading on wash
+        )
+        for foreground, background in pairs:
+            self.assertGreaterEqual(contrast_ratio(foreground, background), 4.5, (foreground, background))
 
     def test_service_files_and_doc_never_use_prohibited_outcome_language(self):
         """CI governance mirror for the files this boundary owns.
