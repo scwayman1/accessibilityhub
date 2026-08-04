@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -280,6 +281,7 @@ class StructureAndOcrEndpointTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("tesseract"), "tesseract binary is not installed")
     def test_fix_ocr_applies_a_text_layer_to_a_scan_end_to_end(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         from test_ocr import scan_pdf
         result = self.post_json("/api/fix-ocr", {
             "filename": "scan.pdf",

@@ -66,6 +66,52 @@ class MasteryProgressionTests(unittest.TestCase):
         self.assertEqual(journey.journey()["repeat_defects"], [])
 
 
+class FixLineageTests(unittest.TestCase):
+    """A fixed copy produced by this session is the same document, not a new one.
+
+    Regression: chained fixes (title -> structure -> links) produced a new hash
+    per copy, so one progressively-fixed document read as a defect 'appearing in
+    3 documents' and triggered repeat-defect warnings on the happy path."""
+
+    def test_rereview_of_fixed_copy_is_not_a_repeat_defect(self):
+        journey = LearningJourney()
+        journey.record_review(DOC_A, ["PDF.LINKS.PURPOSE", "PDF.METADATA.TITLE"])
+        journey.record_lineage(DOC_A, DOC_B)  # fix produced copy B
+        journey.record_review(DOC_B, ["PDF.LINKS.PURPOSE"])
+        journey.record_lineage(DOC_B, DOC_C)  # second fix produced copy C
+        journey.record_review(DOC_C, ["PDF.LINKS.PURPOSE"])
+        state = journey.journey()
+        self.assertEqual(state["repeat_defects"], [])
+        self.assertEqual(state["documents_reviewed"], 1)
+
+    def test_fixed_copy_does_not_count_as_a_clean_document_for_sustained(self):
+        journey = LearningJourney()
+        journey.record_review(DOC_A, ["PDF.METADATA.TITLE"])
+        journey.record_fix(DOC_A, ["PDF.METADATA.TITLE"])
+        journey.record_lineage(DOC_A, DOC_B)
+        journey.record_review(DOC_B, [])  # the rechecked copy, now clean
+        journey.record_review(DOC_C, [])  # one genuinely new clean document
+        state = journey.journey()["skills"]["titles_and_language"]
+        self.assertEqual(state["state"], "verified")
+        self.assertEqual(state["clean_documents_since_verified"], 1)
+
+    def test_distinct_documents_still_count_as_repeats(self):
+        journey = LearningJourney()
+        journey.record_review(DOC_A, ["PDF.LINKS.PURPOSE"])
+        journey.record_lineage(DOC_A, DOC_B)
+        journey.record_review(DOC_D, ["PDF.LINKS.PURPOSE"])  # unrelated document
+        repeats = journey.journey()["repeat_defects"]
+        self.assertEqual(len(repeats), 1)
+        self.assertEqual(repeats[0]["documents_affected"], 2)
+
+    def test_lineage_without_hashes_is_ignored(self):
+        journey = LearningJourney()
+        journey.record_lineage(None, DOC_B)
+        journey.record_lineage(DOC_A, None)
+        journey.record_lineage(DOC_A, DOC_A)
+        self.assertEqual(journey.events, [])
+
+
 class JourneyPrivacyAndPersistenceTests(unittest.TestCase):
     def test_events_persist_to_disk_and_reload(self):
         with tempfile.TemporaryDirectory() as directory:

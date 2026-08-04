@@ -24,7 +24,7 @@
       "title": "Tags and reading order",
       "why_it_matters": "Tags tell assistive technology what each part of the page is \u2014 heading, list, table, paragraph \u2014 and what order to read it in. Without them, a screen reader gets a flat stream of text with no landmarks.",
       "who_it_affects": "Screen reader users most of all; also anyone using reflow on a phone or reading tools that rely on structure.",
-      "fix_at_source": "Use real heading styles, lists, and table tools in the source document, then export with 'tagged PDF' or 'document structure' enabled. If only the exported PDF exists, the Fix Lab below can build a tag tree from roles you confirm block by block \u2014 and declines to the HTML rebuild when the page content cannot be matched exactly.",
+      "fix_at_source": "Use real heading styles, lists, and table tools in the source document, then export with 'tagged PDF' or 'document structure' enabled. If only the exported PDF exists, the Fix Lab below can build a tag tree from roles you confirm block by block \u2014 and when the page content cannot be matched exactly, it declines the change and routes you to the HTML rebuild instead.",
       "auto_fixable": false,
       "fix_lab": "structure"
     },
@@ -40,7 +40,7 @@
       "title": "Figures missing alt text",
       "why_it_matters": "These images are tagged as figures \u2014 the structure is there \u2014 but no description was ever attached. A screen reader announces each one as an unnamed image and moves on, leaving the reader to guess what they missed.",
       "who_it_affects": "Blind and low-vision students most directly; the description you write is the entire image for them.",
-      "fix_at_source": "You write the description (or mark the image decorative); the tool attaches it to the figure element in a copy and re-checks. In the source application, add alt text as you insert each image.",
+      "fix_at_source": "In the source application, add alt text as you insert each image, then re-export. If only the PDF exists, you write the description here (or mark the image decorative) and the tool attaches it to the figure element in a copy and re-checks.",
       "auto_fixable": false,
       "fix_lab": "images"
     },
@@ -55,7 +55,7 @@
       "title": "Links without a name",
       "why_it_matters": "A link with no accessible description is announced by its raw URL \u2014 or as just 'link'. Screen reader users navigating by link list get a list of destinations with no information in it.",
       "who_it_affects": "Screen reader users navigating by link list, and anyone whose software reads links aloud.",
-      "fix_at_source": "You describe each link's destination; the tool writes the description onto the link annotation in a copy and re-checks. In the source, write meaningful link text before exporting.",
+      "fix_at_source": "In the source document, write meaningful link text before exporting. If only the PDF exists, you describe each link's destination here and the tool writes it onto the link annotation in a copy and re-checks.",
       "auto_fixable": false,
       "fix_lab": "links"
     },
@@ -81,15 +81,15 @@
       "auto_fixable": false
     },
     "PDF.INTAKE.QPDF_UNAVAILABLE": {
-      "title": "Structure checker not installed",
-      "why_it_matters": "This review ran without qpdf, so structural integrity evidence is missing from the report. The findings you see are still valid; the report is just less complete.",
+      "title": "Structure check not available",
+      "why_it_matters": "This review ran without its structural integrity checker (qpdf), so that evidence is missing from the report. The findings you see are still valid; the report is just less complete.",
       "who_it_affects": "The completeness of this review only \u2014 not the document itself.",
-      "fix_at_source": "Install qpdf on this computer to include structural checks in future reviews.",
+      "fix_at_source": "No document change is needed. Run the review on a computer where qpdf is installed to include structural checks.",
       "auto_fixable": false
     },
     "PDF.PARSE.PYPDF": {
-      "title": "Unreadable by the parser",
-      "why_it_matters": "If a well-behaved parser cannot open the file, assistive technology may not be able to either.",
+      "title": "Could not be opened",
+      "why_it_matters": "If a well-behaved reading tool cannot open the file, assistive technology may not be able to either.",
       "who_it_affects": "Potentially every reader; certainly this review, which could not inspect the document contents.",
       "fix_at_source": "Export a fresh PDF from the original source document, then review again.",
       "auto_fixable": false
@@ -98,7 +98,7 @@
       "title": "Validator not available",
       "why_it_matters": "The containerized veraPDF validator did not run on this computer, so the machine-checkable PDF/UA evidence is missing from this review. The findings you see are still valid; the report is just less complete.",
       "who_it_affects": "The completeness of this review only \u2014 not the document itself.",
-      "fix_at_source": "Make the pinned veraPDF image available locally so future reviews can include validator evidence.",
+      "fix_at_source": "No document change is needed. Run the review on a computer where the pinned veraPDF validator is set up so future reviews can include its evidence.",
       "auto_fixable": false
     },
     "PDF.VERAPDF.UA1": {

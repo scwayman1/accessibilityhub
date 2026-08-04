@@ -2,3 +2,5 @@
 out/
 fixtures/
 __pycache__/
+.hub-staging/
+nohup.out

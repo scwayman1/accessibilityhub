@@ -5,7 +5,7 @@
 > [AI architecture](ai-architecture-byok.md), beyond what individual pull
 > requests describe. Every "shipped" claim below names its implementation and
 > its tests — the same evidence-before-claims discipline the product itself
-> enforces. Last updated: 2026-07-20.
+> enforces. Last updated: 2026-08-04.
 
 ## Post-merge review fixes (2026-07-20)
 
@@ -207,6 +207,59 @@ driven by a live product-render review of the merged build:
 
 Tests: 240 total (was 185). Browser-verified before/after across the
 workbench, landing, and staging surfaces.
+
+## Demo-readiness loop (2026-08-04)
+
+An overnight multi-agent pass driven by a full product render review of every
+surface, preparing the morning stakeholder demo:
+
+- **Public walkthrough rebuilt:** `sample-review.html` was converged onto the
+  product design system and the canonical four-lane vocabulary (Needs
+  attention / Review recommended / Verified signal / Not assessed) with the
+  Add material → Review → Improve → Check again rail; the landing's journey
+  labels and footer now use the same canonical rail; all public pages share
+  the favicon (`assets/favicon.svg`).
+- **Staging polish (`service/`):** signal card titles now come from
+  `rule_knowledge.json` `title` fields instead of string-mangled rule IDs
+  (the garbled "Veraunavailable" heading is gone); signals are ordered by
+  lane; tool-availability items collapse into a plain-language "Review
+  completeness" strip instead of leading the page; unreadable/encrypted
+  documents land in Needs attention with educator copy; a Sign out control
+  and `/logout` route exist; the port contract is `PORT` first, then
+  `HUB_PORT`, then `8787` (`service/__main__.py`).
+  Tests: `tests/test_staging_service.py`.
+- **Workbench fixes (`local_reviewer.py`/`.html`):** the retired
+  "Accessibility Studio" name was replaced by "Accessibility Hub" across
+  workbench-owned surfaces (enforced by `tests/test_ui_debt.py`); the CLI
+  gained real `--port`/`--help` handling with a friendly
+  port-already-in-use message.
+- **Engine and report copy (`check_pdf.py`):** retired "Spike 001" and the
+  old product name from user-visible strings; the Markdown report is titled
+  "Coastline College Accessibility Hub — document review report", never
+  prints a literal `- None` for a missing validator artifact, and closes
+  with "What this review can say" instead of "Verdict"; tool-failure and
+  structure findings speak educator language instead of variable dumps;
+  `PDF.LINKS.PURPOSE` no longer fires when every link already carries a
+  verified name, and it and `PDF.IMAGES.ALT_MISSING` gained page anchors
+  (figures resolved via `/Pg`). Tests: `tests/test_report_anchors.py`.
+- **Teaching cards (`rule_knowledge.json`):** fixed the garbled "declines to
+  the HTML rebuild" phrasing; `fix_at_source` for alt text and link names now
+  leads with the source-application fix; toolchain card titles softened to
+  educator language ("Structure check not available", "Could not be opened").
+- **Demo kit:** `README.md` rewritten around the verified quickstart
+  (`pip install -r requirements.txt`, `python3.11 -m pytest tests/ -q`) and
+  the three surfaces (public site, local workbench, staging service via
+  `scripts/demo_up.sh` + `scripts/staging_smoke.py`); new
+  [`demo-runbook.md`](demo-runbook.md) scripts the ten-minute storyline,
+  the Render deploy path, and the pre-demo checklist;
+  `private-staging-service.md` documents the port contract and the
+  per-deploy smoke test; `render.yaml` notes that the hosted runtime has no
+  qpdf/veraPDF/tesseract and that reviews disclose this under Review
+  completeness.
+
+Tests: 280 total (was 240). Local demo path verified end to end:
+`scripts/demo_up.sh` + `scripts/staging_smoke.py` passing against a fresh
+local instance.
 
 ## Phase status at a glance
 

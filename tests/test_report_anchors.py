@@ -67,6 +67,39 @@ def anchored_pdf() -> bytes:
     ])
 
 
+def named_link_pdf() -> bytes:
+    """One page whose only link annotation carries an accessible description (/Contents)."""
+    page1 = b"BT /F1 12 Tf 72 720 Td (Week 3 reading list.) Tj ET"
+    return build_pdf([
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R /Annots [6 0 R] >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(page1)).encode() + b" >>\nstream\n" + page1 + b"\nendstream",
+        b"<< /Type /Annot /Subtype /Link /Rect [72 700 150 720] /Border [0 0 0] "
+        b"/Contents (Week 3 reading: chapter 4) "
+        b"/A << /S /URI /URI (https://example.edu/reading) >> >>",
+    ])
+
+
+def tagged_figure_pdf() -> bytes:
+    """One tagged page with a /Figure structure element (no /Alt) anchored to the page via /Pg."""
+    page1 = b"BT /F1 12 Tf 72 720 Td (A chart appears below.) Tj ET q 100 0 0 100 72 500 cm /Im1 Do Q"
+    return build_pdf([
+        b"<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> /XObject << /Im1 6 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(page1)).encode() + b" >>\nstream\n" + page1 + b"\nendstream",
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Length 1 >>\nstream\n\x00\nendstream",
+        b"<< /Type /StructTreeRoot /K [8 0 R] >>",
+        b"<< /S /Figure /P 7 0 R /Pg 3 0 R >>",
+    ])
+
+
 def partially_scanned_pdf() -> bytes:
     """Two pages: page 1 has extractable text; page 2 has an empty content stream."""
     page1 = b"BT /F1 12 Tf 72 720 Td (Text on page one.) Tj ET"
@@ -196,6 +229,30 @@ class PageAnchorTests(unittest.TestCase):
         report = run_analyze(partially_scanned_pdf())
         self.assertEqual(report["metadata"]["pages_without_extractable_text"], 1)
         self.assertIsInstance(report["metadata"]["pages_without_extractable_text"], int)
+
+    def test_link_purpose_review_fires_with_pages_while_links_lack_names(self):
+        report = run_analyze(anchored_pdf())
+        found = rules(report)
+        self.assertIn("PDF.LINKS.PURPOSE", found)
+        self.assertEqual(found["PDF.LINKS.PURPOSE"]["pages"], [2])
+
+    def test_link_purpose_review_acknowledges_verified_names_but_still_asks(self):
+        # A named annotation can still read as "click here" — purpose review
+        # stays a human task while any link exists, without contradicting the
+        # verified-name strength.
+        report = run_analyze(named_link_pdf())
+        found = rules(report)
+        self.assertNotIn("PDF.LINKS.NAME", found)
+        self.assertIn("PDF.LINKS.PURPOSE", found)
+        self.assertIn("carry accessible descriptions", found["PDF.LINKS.PURPOSE"]["evidence"])
+        strengths = {item["rule_id"] for item in report["strengths"]}
+        self.assertIn("PDF.LINKS.NAME", strengths)
+
+    def test_figure_alt_finding_points_at_the_figure_page(self):
+        report = run_analyze(tagged_figure_pdf())
+        found = rules(report)
+        self.assertIn("PDF.IMAGES.ALT_MISSING", found)
+        self.assertEqual(found["PDF.IMAGES.ALT_MISSING"]["pages"], [1])
 
     def test_findings_without_page_evidence_carry_no_pages_key(self):
         report = run_analyze(anchored_pdf())

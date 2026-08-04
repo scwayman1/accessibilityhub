@@ -33,6 +33,9 @@ class StagingServiceTests(unittest.TestCase):
         self.temp.cleanup()
 
     def request(self, path, method="GET", form=None, cookie=None):
+        query = ""
+        if "?" in path:
+            path, query = path.split("?", 1)
         body = urlencode(form or {}).encode()
         captured = {}
         def start_response(status, headers):
@@ -41,6 +44,7 @@ class StagingServiceTests(unittest.TestCase):
         response = b"".join(self.app({
             "REQUEST_METHOD": method,
             "PATH_INFO": path,
+            "QUERY_STRING": query,
             "CONTENT_LENGTH": str(len(body)),
             "CONTENT_TYPE": "application/x-www-form-urlencoded",
             "wsgi.input": io.BytesIO(body),
@@ -337,6 +341,16 @@ class StagingServiceTests(unittest.TestCase):
         self.assertNotIn("PDF.TEXT_LAYER", {item["rule_id"] for item in after["signals"] if item["lane"] != "not_assessed"})
         provenance = self.repository.remediations("coastline-staging", child_id)[0]["provenance"]
         self.assertEqual(provenance["actions"][0]["provenance"], "ocr_generated")
+        # Once OCR exists in the lineage and text is extractable, the OCR
+        # action is no longer offered on the rechecked copy.
+        _, _, child_page = self.request(f"/documents/{child_id}")
+        self.assertNotIn(b"Add a text layer from this scan", child_page)
+        # A recheck that resolves signals without minting new verified strengths
+        # must not claim "The accessibility signals are now verified" — the
+        # banner falls back to an honest compare-the-lanes line.
+        self.assertIn(b"Your improved copy is ready", child_page)
+        self.assertNotIn(b"The accessibility signal", child_page)
+        self.assertIn(b"Compare the lanes with the previous version", child_page)
 
 
     def _optin_app(self):
@@ -424,6 +438,237 @@ class StagingServiceTests(unittest.TestCase):
         for surface in surfaces:
             self.assertNotIn(secret_code.encode(), surface)
             self.assertNotIn(secret_session.encode(), surface)
+
+    # ------------------------------------------------------------------
+    # Demo-readiness behaviors: titles, lanes, logout, lineage naming,
+    # guided structure form, Fix Lab gating, provenance, error surfaces.
+    # ------------------------------------------------------------------
+
+    def test_signal_titles_come_from_rule_knowledge_never_mangled_ids(self):
+        from service.worker import normalize_report
+        report = {
+            "findings": [
+                {"category": "deterministic_defect", "rule_id": "PDF.METADATA.TITLE", "evidence": "e", "next_action": "n", "location": "l"},
+                {"category": "tool_failure_or_unsupported", "rule_id": "PDF.VERAPDF.UNAVAILABLE", "evidence": "e", "next_action": "n", "location": "l"},
+                {"category": "deterministic_defect", "rule_id": "PDF.SOME.NEW_RULE", "evidence": "e", "next_action": "n", "location": "l"},
+            ],
+            "strengths": [{"rule_id": "PDF.IMAGES.ALT_MISSING", "evidence": "e"}],
+            "not_assessed": [],
+        }
+        result = normalize_report(report)
+        titles = {signal["title"] for signal in result["signals"]}
+        self.assertIn("Document title", titles)  # educator title from rule_knowledge.json
+        self.assertNotIn("Metadata.Title", titles)
+        self.assertNotIn("Veraunavailable", json.dumps(result))
+        # Unknown rule ids humanize (no dots, no mangling), never render raw.
+        self.assertIn("Some New Rule", titles)
+        # A verified strength is not named after the defect it disproves.
+        strength = next(s for s in result["signals"] if s["lane"] == "verified_signal")
+        self.assertEqual(strength["title"], "Figure descriptions in place")
+
+    def test_tool_availability_moves_to_completeness_and_lanes_are_grouped(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        result = self.wait_for_result(document_id)["result"]
+        rule_ids = {signal["rule_id"] for signal in result["signals"]}
+        # Toolchain gaps never render as lane cards; they live in completeness.
+        self.assertNotIn("PDF.INTAKE.QPDF_UNAVAILABLE", rule_ids)
+        self.assertNotIn("PDF.VERAPDF.UNAVAILABLE", rule_ids)
+        for note in result.get("completeness", []):
+            self.assertNotIn("Install", note)  # plain language, not ops instructions
+        # Signals are grouped in canonical lane order, defects first.
+        order = ["needs_attention", "review_recommended", "verified_signal", "not_assessed"]
+        ranks = [order.index(signal["lane"]) for signal in result["signals"]]
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertEqual(result["signals"][0]["lane"], "needs_attention")
+        # The report's full not_assessed list is carried, including color-only meaning.
+        titles = {signal["title"] for signal in result["signals"] if signal["lane"] == "not_assessed"}
+        self.assertIn("Color-only meaning", titles)
+        # The page shows a collapsed completeness strip after the lane cards.
+        _, _, page = self.request(f"/documents/{document_id}")
+        if result.get("completeness"):
+            self.assertIn(b"Review completeness", page)
+            self.assertLess(page.index(b"Needs attention"), page.index(b"Review completeness"))
+        self.assertNotIn(b"Veraunavailable", page)
+
+    def test_unreadable_documents_land_in_needs_attention_with_plain_copy(self):
+        from service.worker import normalize_report
+        report = {
+            "findings": [{
+                "category": "blocking_technical_failure", "rule_id": "PDF.INTAKE.ENCRYPTED",
+                "evidence": "qpdf reported encrypted content", "next_action": "Do not process this file in the spike.",
+                "location": "document",
+            }],
+            "strengths": [], "not_assessed": [],
+        }
+        result = normalize_report(report)
+        signal = result["signals"][0]
+        self.assertEqual(signal["lane"], "needs_attention")
+        self.assertNotIn("spike", (signal["next_action"] or "").lower())
+        self.assertIn("password-protected", signal["evidence"])
+
+    def test_logout_clears_session_and_lands_on_login_with_note(self):
+        self.login()
+        _, _, workspace = self.request("/app")
+        self.assertIn(b"Sign out", workspace)
+        self.assertIn(b'action="/logout"', workspace)
+        status, headers, _ = self.request("/logout", "POST")
+        self.assertTrue(status.startswith("303"))
+        self.assertEqual(headers["Location"], "/login?signed-out=1")
+        self.assertIn("Max-Age=0", headers["Set-Cookie"])
+        # The cleared cookie no longer opens the workspace.
+        cleared = headers["Set-Cookie"].split(";", 1)[0]
+        status, headers, _ = self.request("/app", cookie=cleared)
+        self.assertTrue(status.startswith("303"))
+        self.assertEqual(headers["Location"], "/login")
+        status, _, page = self.request("/login?signed-out=1", cookie=cleared)
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"You are signed out.", page)
+        self.cookie = ""
+
+    def test_404_page_links_back_to_the_workspace(self):
+        self.login()
+        status, _, page = self.request("/no-such-page")
+        self.assertTrue(status.startswith("404"))
+        self.assertIn(b'href="/app"', page)
+        status, _, page = self.request("/documents/does-not-exist")
+        self.assertTrue(status.startswith("404"))
+        self.assertIn(b'href="/app"', page)
+
+    def test_lineage_naming_uses_versions_and_workspace_shows_one_row(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(source_id)
+        _, headers, _ = self.request(
+            f"/documents/{source_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        v2_id = headers["Location"].rsplit("/", 1)[-1]
+        v2 = self.repository.document("coastline-staging", v2_id)
+        self.assertEqual(v2["filename"], "coastline-synthetic-course-handout.v2.pdf")
+        self.wait_for_result(v2_id)
+        _, headers, _ = self.request(
+            f"/documents/{v2_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        v3_id = headers["Location"].rsplit("/", 1)[-1]
+        v3 = self.repository.document("coastline-staging", v3_id)
+        self.assertEqual(v3["filename"], "coastline-synthetic-course-handout.v3.pdf")
+        self.assertNotIn("rechecked", v3["filename"])
+        self.wait_for_result(v3_id)
+        _, _, workspace = self.request("/app")
+        # One row per lineage: the base name appears once, with a version tag.
+        self.assertEqual(workspace.count(b"<strong>coastline-synthetic-course-handout.pdf</strong>"), 1)
+        self.assertIn(b">v3<", workspace)
+        self.assertIn(b"3 versions", workspace)
+        self.assertNotIn(b"rechecked", workspace)
+
+    def test_guided_structure_form_replaces_raw_json_and_submits_roles(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(source_id)
+        _, _, page = self.request(f"/documents/{source_id}")
+        # Per-block rows with labeled selects; no raw JSON textareas.
+        self.assertIn(b"name=role_0", page)
+        self.assertIn(b"for=role_0", page)
+        self.assertIn(b"name=block_count", page)
+        self.assertNotIn(b"Confirmed roles (JSON)", page)
+        self.assertNotIn(b"<textarea", page)
+        # The first block defaults to a heading, later blocks to paragraphs.
+        self.assertRegex(page, rb"role_0[^/]*?<option value=h1 selected")
+        status, headers, _ = self.request(
+            f"/documents/{source_id}/remediate/structure", "POST",
+            {"confirmed": "yes", "block_count": "6", "role_0": "h1", "role_1": "p",
+             "role_2": "p", "role_3": "p", "role_4": "p", "role_5": "p"},
+        )
+        self.assertTrue(status.startswith("303"), status)
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        result = self.wait_for_result(child_id)["result"]
+        verified = {item["rule_id"] for item in result["signals"] if item["lane"] == "verified_signal"}
+        self.assertIn("PDF.STRUCTURE.SEMANTICS", verified)
+
+    def test_fix_lab_is_gated_until_the_assessment_is_terminal(self):
+        self.worker.stop()  # Keep the job queued so the pending page is observable.
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertIn(b"Review first", page)
+        self.assertNotIn(b"Apply and recheck", page)
+        self.assertNotIn(b"Build tags and recheck", page)
+        self.assertTrue(self.worker.run_once())
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertNotIn(b"Review first", page)
+        self.assertIn(b"Apply and recheck", page)
+
+    def test_provenance_panel_shows_kind_time_and_short_hashes(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(source_id)
+        _, headers, _ = self.request(
+            f"/documents/{source_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(child_id)
+        provenance = self.repository.remediations("coastline-staging", child_id)[0]["provenance"]
+        source_hash = provenance["source_sha256"].removeprefix("sha256:")[:10]
+        result_hash = provenance["remediated_sha256"].removeprefix("sha256:")[:10]
+        _, _, page = self.request(f"/documents/{child_id}")
+        text = page.decode()
+        self.assertIn("Title &amp; language", text)
+        self.assertIn("<span class=tag>metadata</span>", text)  # raw kind stays visible
+        self.assertIn(f"{source_hash}… → {result_hash}…", text)
+
+    def test_error_surfaces_never_show_raw_python_exception_text(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(source_id)
+        # Legacy JSON field with malformed JSON: friendly copy, no parser text.
+        status, _, page = self.request(
+            f"/documents/{source_id}/remediate/structure", "POST",
+            {"confirmed": "yes", "roles": "{not json", "order": "[0]"},
+        )
+        self.assertTrue(status.startswith("400"))
+        self.assertNotIn(b"Expecting property name", page)
+        self.assertNotIn(b"JSONDecodeError", page)
+        self.assertNotIn(b"Traceback", page)
+        self.assertIn(b"could not be read", page)
+        # Guided path with a missing block count: friendly copy as well.
+        status, _, page = self.request(
+            f"/documents/{source_id}/remediate/structure", "POST",
+            {"confirmed": "yes", "block_count": "wat"},
+        )
+        self.assertTrue(status.startswith("400"))
+        self.assertIn(b"structure form was incomplete", page)
+
+    def test_favicon_served_for_both_paths_no_console_404(self):
+        for path in ("/favicon.ico", "/assets/favicon.svg"):
+            status, headers, payload = self.request(path)
+            self.assertTrue(status.startswith("200"), path)
+            self.assertEqual(headers["Content-Type"], "image/svg+xml")
+            self.assertIn(b"<svg", payload)
+        # The shell references the icon so browsers never guess at /favicon.ico.
+        self.assertIn(b'rel="icon" href="/assets/favicon.svg"', self.request("/login")[2])
+
+    def test_header_uses_coastline_navy_with_sky_border(self):
+        _, _, page = self.request("/login")
+        self.assertIn(b"header { background:var(--navy)", page)
+        self.assertIn(b"border-bottom:3px solid var(--sky)", page)
+
+    def test_port_contract_honors_port_then_hub_port_then_default(self):
+        from service.__main__ import resolve_port
+        self.assertEqual(resolve_port({}), 8787)
+        self.assertEqual(resolve_port({"HUB_PORT": "8813"}), 8813)
+        self.assertEqual(resolve_port({"PORT": "9001", "HUB_PORT": "8813"}), 9001)
+        self.assertEqual(resolve_port({"PORT": "  9002  "}), 9002)
+        with self.assertRaises(SystemExit):
+            resolve_port({"PORT": "not-a-port"})
 
     def test_service_files_and_doc_never_use_prohibited_outcome_language(self):
         """CI governance mirror for the files this boundary owns.

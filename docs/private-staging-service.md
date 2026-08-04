@@ -55,6 +55,9 @@ Setting a name is not an integration. This repository has no object-store, scann
 
 ## Local run
 
+The one-command path is `scripts/demo_up.sh` (it generates the secrets, prints
+the access code, and starts the service). The manual equivalent:
+
 ```sh
 export HUB_ENV=development
 export HUB_STAGING_ACCESS_CODE='choose-a-local-code'
@@ -64,6 +67,21 @@ python3.11 -m service
 ```
 
 Open `http://127.0.0.1:8787/login`. Use only the bundled synthetic fixture.
+
+Port contract: the service honors `PORT` first, then `HUB_PORT`, and defaults
+to `8787` when neither is set (`service/__main__.py`). `scripts/demo_up.sh`
+accepts `HUB_PORT` and maps it through for you.
+
+After any deploy or environment change, verify the running service with the
+repeatable smoke test:
+
+```sh
+python3.11 scripts/staging_smoke.py --base-url http://127.0.0.1:8787 \
+    --access-code "$HUB_STAGING_ACCESS_CODE"
+```
+
+Exit code 0 means every required check passed; run it against the hosted URL
+after every Render deploy as well.
 
 ## Hosted synthetic testing (explicit opt-in)
 
@@ -95,10 +113,10 @@ Open `http://127.0.0.1:8787/login`. Use only the bundled synthetic fixture.
 5. Open `https://<your-service>.onrender.com/healthz`. Confirm the JSON shows `"environment": "staging"`, `"login_ready": true`, `"hosted_synthetic_optin": true`, and — still — `"hosted_intake_enabled": false`.
 6. Open `https://<your-service>.onrender.com/`. With the checked-in `HUB_PUBLIC_ACCESS=true` value, no access code is requested; this does not expose any upload or real-intake route.
 7. **Choose sample:** click **Start a sample review**. You land on a progress page that checks again every five seconds while the queued assessment runs.
-8. **Review findings:** expect **Needs attention** on the document title and language, alongside **Review recommended**, **Verified signal**, and collapsed specialist-review checks. Each signal stands alone; there is no overall score.
+8. **Understand:** expect **Needs attention** on the document title and language, alongside the **Review recommended**, **Verified signal**, and **Not assessed** lanes. Each signal stands alone; there is no overall result.
 9. **Improve:** use **Fix the clearest issues**, keep or edit the suggested values, and click **Apply and recheck**. You are redirected to a new rechecked sample version.
-10. **Check again:** the completion banner reports the two newly verified signals, while the original sample remains unchanged. The provenance panel records the repair; the document is not given an overall status.
-11. Optionally repeat with **Review a scanned handout** for the OCR path, and use **Remove this synthetic record** to clean up.
+10. **Verify:** the completion banner reports the two newly verified signals, while the original sample remains unchanged. The provenance panel records the repair; the document is not given an overall status.
+11. Optionally repeat with **Try the scanned sample** for the OCR path, and use **Remove this synthetic record** to clean up.
 12. When testing is done, either delete the service or clear `HUB_ALLOW_HOSTED_SYNTHETIC` in the dashboard (the service restarts and hosted document creation closes again).
 
 ## Render configuration

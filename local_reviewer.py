@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Loopback-only local PDF reviewer for Coastline Accessibility Studio."""
+"""Loopback-only local PDF reviewer for the Coastline College Accessibility Hub."""
 from __future__ import annotations
 
+import argparse
 import base64
+import errno
+import ipaddress
 import json
 import subprocess
 import sys
@@ -28,6 +31,26 @@ MAX_JSON_BYTES = 80 * 1024 * 1024  # fix-semantics carries the PDF as base64
 
 class UploadValidationError(ValueError):
     """Raised when an inbound local review request is not a supported PDF."""
+
+
+def updated_filename(filename: str) -> str:
+    """Name for the fixed copy. Repeated fixes never stack suffixes:
+    'week3.pdf' -> 'week3.updated.pdf' and 'week3.updated.pdf' stays
+    'week3.updated.pdf' no matter how many fixes are chained."""
+    stem = Path(filename).stem
+    while stem.endswith(".updated"):
+        stem = stem.removesuffix(".updated")
+    return f"{stem}.updated.pdf"
+
+
+# Served when assets/favicon.svg has not been generated yet: navy rounded
+# square with a sky check mark, matching the shared design system.
+FALLBACK_FAVICON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    b'<rect width="32" height="32" rx="7" fill="#003764"/>'
+    b'<path d="M8.5 17.5 14 23 24 10.5" fill="none" stroke="#6bc4e8" '
+    b'stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
 
 
 def validate_pdf_upload(filename: str, payload: bytes) -> None:
@@ -78,7 +101,7 @@ def run_local_fix(
     before = run_local_review(filename, payload, checker)
     remediation = MetadataRemediation.with_builtin_tools()
     fixed_payload, remediation_report = remediation.apply(filename, payload, title=title, language=language)
-    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    fixed_filename = updated_filename(filename)
     after = run_local_review(fixed_filename, fixed_payload, checker)
     return {
         "before": normalize_report_for_browser(before),
@@ -109,7 +132,7 @@ def run_local_fix_semantics(
     before = run_local_review(filename, payload, checker)
     remediation = SemanticRemediation.with_builtin_tools()
     fixed_payload, remediation_report = remediation.apply(filename, payload, link_names=link_names, alt_texts=alt_texts)
-    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    fixed_filename = updated_filename(filename)
     after = run_local_review(fixed_filename, fixed_payload, checker)
     return {
         "before": normalize_report_for_browser(before),
@@ -133,7 +156,7 @@ def run_local_fix_structure(
     fixed_payload, remediation_report = remediation.apply(
         filename, payload, confirmed_roles=confirmed_roles or {}, reading_order=reading_order,
     )
-    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    fixed_filename = updated_filename(filename)
     after = run_local_review(fixed_filename, fixed_payload, checker)
     return {
         "before": normalize_report_for_browser(before),
@@ -153,7 +176,7 @@ def run_local_fix_ocr(
     before = run_local_review(filename, payload, checker)
     remediation = OcrRemediation.with_builtin_tools()
     fixed_payload, remediation_report = remediation.apply(filename, payload)
-    fixed_filename = f"{Path(filename).stem}.updated.pdf"
+    fixed_filename = updated_filename(filename)
     after = run_local_review(fixed_filename, fixed_payload, checker)
     return {
         "before": normalize_report_for_browser(before),
@@ -187,6 +210,7 @@ def create_server(
     checker: Callable[[Path, Path], dict[str, Any]],
     journey: LearningJourney | None = None,
     intelligence: IntelligenceGateway | None = None,
+    host: str = "127.0.0.1",
 ) -> ThreadingHTTPServer:
     """Create a localhost-only HTTP server for the browser workbench."""
     if journey is None:
@@ -210,12 +234,20 @@ def create_server(
     def record_fix_event(result: dict[str, Any]) -> None:
         try:
             before = result["before"]
-            after_ids = {item.get("rule_id") for item in result["after"].get("findings", [])}
+            after = result["after"]
+            after_ids = {item.get("rule_id") for item in after.get("findings", [])}
             resolved = [
                 item.get("rule_id")
                 for item in before.get("findings", [])
                 if item.get("rule_id") not in after_ids
             ]
+            # The fixed copy is the same document, not a new one: link its
+            # fingerprint to the source so later re-reviews of the copy never
+            # count as a defect recurring in a second document.
+            journey.record_lineage(
+                (before.get("input") or {}).get("sha256"),
+                (after.get("input") or {}).get("sha256"),
+            )
             journey.record_review(
                 (before.get("input") or {}).get("sha256"),
                 [item.get("rule_id") for item in before.get("findings", [])],
@@ -258,13 +290,24 @@ def create_server(
                 "/delight-content.json": ("delight_content.json", "application/json; charset=utf-8"),
                 "/api/knowledge": ("rule_knowledge.json", "application/json; charset=utf-8"),
                 "/foundation-ads.json": ("foundation_ads.json", "application/json; charset=utf-8"),
+                "/favicon.ico": ("assets/favicon.svg", "image/svg+xml"),
+                "/favicon.svg": ("assets/favicon.svg", "image/svg+xml"),
+                "/assets/favicon.svg": ("assets/favicon.svg", "image/svg+xml"),
+                "/assets/coastline-college-logo-white.png": ("assets/coastline-college-logo-white.png", "image/png"),
             }
             selected = static_files.get(request_url.path)
             if selected is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            page = Path(__file__).with_name(selected[0])
-            encoded = page.read_bytes()
+            page = Path(__file__).parent / selected[0]
+            if not page.exists():
+                if selected[0] == "assets/favicon.svg":
+                    encoded = FALLBACK_FAVICON_SVG
+                else:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+            else:
+                encoded = page.read_bytes()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", selected[1])
             self.send_header("Content-Length", str(len(encoded)))
@@ -274,7 +317,7 @@ def create_server(
 
         def read_json_body(self, length: int) -> dict[str, Any] | None:
             if length <= 0 or length > MAX_JSON_BYTES:
-                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body must be JSON under 10 MB."})
+                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body must be JSON under 80 MB."})
                 return None
             try:
                 body = json.loads(self.rfile.read(length))
@@ -555,13 +598,60 @@ def create_server(
         def log_message(self, format: str, *_args: Any) -> None:
             return
 
-    return ThreadingHTTPServer(("127.0.0.1", port), LocalReviewerHandler)
+    return ThreadingHTTPServer((host, port), LocalReviewerHandler)
 
 
-def main() -> int:
+DEFAULT_PORT = 8765
+DEFAULT_HOST = "127.0.0.1"
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="local_reviewer.py",
+        description=(
+            "Coastline College Accessibility Hub — local workbench. "
+            "Runs a loopback-only PDF reviewer on this computer; nothing is uploaded."
+        ),
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
+                        help=f"Port to listen on (default: {DEFAULT_PORT})")
+    parser.add_argument("--host", default=DEFAULT_HOST,
+                        help=f"Loopback address to bind (default: {DEFAULT_HOST}; "
+                             "non-loopback addresses are refused — the workbench is loopback-only)")
+    return parser.parse_args(argv)
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if not _is_loopback_host(args.host):
+        print(
+            f"Refusing to bind {args.host!r}: the workbench promises documents stay on this "
+            "computer, so it only listens on loopback addresses (127.0.0.1, ::1, localhost).",
+            file=sys.stderr,
+        )
+        return 2
     journey = LearningJourney(Path.home() / ".coastline-studio" / "journey.json")
-    server = create_server(8765, run_spike_checker, journey=journey)
-    print("Coastline Accessibility Studio local reviewer: http://127.0.0.1:8765")
+    try:
+        server = create_server(args.port, run_spike_checker, journey=journey, host=args.host)
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            print(
+                f"Port {args.port} is already in use — is the reviewer already running? "
+                f"Open http://{args.host}:{args.port} or pass --port to choose another.",
+                file=sys.stderr,
+            )
+            return 1
+        raise
+    print(f"Coastline College Accessibility Hub local workbench: http://{args.host}:{args.port}")
     print("Loopback only · PDF-only · deterministic · works without AI")
     try:
         server.serve_forever()

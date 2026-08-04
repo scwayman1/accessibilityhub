@@ -2,6 +2,10 @@ services:
   - type: web
     name: accessibility-hub-staging
     runtime: python
+    # The hosted runtime has no qpdf, veraPDF (Docker), or tesseract — the
+    # build installs Python packages only. Reviews still complete: the review
+    # discloses each missing check under "Review completeness" instead of
+    # presenting a partial result as a full one.
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --workers 1 --threads 4 --bind 0.0.0.0:$PORT service.wsgi:application
     healthCheckPath: /healthz
