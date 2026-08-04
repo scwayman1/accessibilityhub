@@ -1,9 +1,12 @@
 # Demo runbook — Coastline College Accessibility Hub
 
-The morning demo tells one story in about ten minutes: **Review →
-Understand → Improve → Verify**, with the product being honest at every step
-about what it did check, what it could not check, and what changed. Nothing in
-this script claims a pass, score, or certification — because the product never
+The demo now tells the story in two acts. The **opening act** is the teacher
+happy path — sign in, upload your own PDF, watch the review, apply the
+suggested fixes, and download a copy with a review-summary page. The
+**deep-dive act** is the original ten-minute walkthrough of every lane,
+repair, and disclosure. Both acts stay honest at every step about what the
+product did check, what it could not check, and what changed. Nothing in this
+script claims a pass, score, or certification — because the product never
 produces one.
 
 ## 1. Sixty-second setup
@@ -35,7 +38,82 @@ Open two browser tabs before starting:
 1. `http://127.0.0.1:8000/` (landing)
 2. `http://127.0.0.1:8787/login` (staging — do not sign in yet)
 
-## 2. The storyline (~10 minutes)
+## 2. Opening act — the teacher happy path (~4 minutes)
+
+Development mode only (`scripts/demo_up.sh` runs it). Hosted staging keeps
+the access-code form and refuses uploads exactly as before — this whole act
+does not exist there. Bring one of your own PDFs, or make one on the spot;
+the review is most convincing on a file the room has never seen.
+
+### Beat A — Demo sign-in (0.5 min)
+
+Open `http://127.0.0.1:8787/login`. Above the access-code form there is one
+button: **Sign in with your Coastline Microsoft account**, with the caption
+"Demo sign-in — no Microsoft account is contacted."
+
+> **Say:** "One honest stub: this button only plays the part of campus SSO.
+> Nothing leaves this machine."
+
+Click it. You are signed in, and the sidebar shows the persona card
+**Jordan Rivera, Faculty** — "Signed in". (The access code still works too,
+but that session keeps the classic sample-only workspace; the upload
+workspace belongs to the demo educator sign-in.)
+
+### Beat B — Upload your course material (0.5 min)
+
+The primary card reads **Upload your course material**: "Choose a PDF from
+your computer (up to 50 MB). It stays on this machine, and the review starts
+right away." Pick a file with the **Course material (PDF)** input and click
+**Upload and review →**. (The bundled samples are still there, demoted to an
+"Or try a sample:" row.)
+
+### Beat C — The sponsored moment (0.5 min)
+
+While the review runs, the progress page ("Looking for useful accessibility
+signals…") shows a clearly labeled **Sponsored** card — Coastline College
+Foundation messages rotating by wall clock, ending with the line "Sponsor
+messages never delay your results."
+
+> **Say:** "The sponsor card is server-rendered, first-party, labeled, and
+> disappears the instant results are ready. It never gates anything."
+
+Watch it vanish: the moment the assessment is terminal, results render and
+the card is gone.
+
+### Beat D — Feedback at a glance (0.5 min)
+
+Above the lanes, the summary chip row totals the review, e.g.
+**"2 need attention · 3 to review · 0 verified · 4 not assessed"** — the
+same counts as the lane cards below, nothing more.
+
+### Beat E — One-click improve (1 min)
+
+On a first review with title/language gaps, the Fix Lab offers
+**Apply suggested fixes and recheck →** — "One click sets the title … and
+the language to English (US) in a new copy, then rechecks it." Click it. The
+recheck page settles on **Recheck complete** with the green
+**Your improved copy is ready** banner, and the chips flip — title and
+language now sit in *Verified signal*.
+
+### Beat F — Produce your document (1 min)
+
+The rechecked page now shows the **Produce your document** card with the
+circular badge — **Reviewed & improved / Coastline College Accessibility
+Hub**, the date, and a short evidence hash — and the line
+**"A review record, not a certification."** Click
+**Download the reviewed copy ↓**. The file downloads as
+`<name>.sealed.pdf`: the same document with exactly one added "Review
+summary" page carrying the seal wording, the review date, the evidence hash,
+where findings landed, and the fixes applied.
+
+> **Say:** "This is a review record you can attach to the file — not a
+> badge, not a certification. Every other page is exactly what you uploaded,
+> plus your fixes — producing changes nothing but the added summary page."
+
+Click **Sign out**. That is the whole teacher loop: sign in, upload, review,
+improve, verify, produce.
+
+## 3. Deep-dive act — the storyline (~10 minutes)
 
 ### Beat 1 — Landing (1 min)
 
@@ -69,11 +147,15 @@ Improve/Verify beats, then switch tabs.
 
 ### Beat 3 — Staging login (0.5 min)
 
-On the login tab, enter the access code from Terminal B.
+On the login tab, enter the access code from Terminal B. (If you just
+finished the opening act, click **Sign out** first — the deep-dive uses the
+access-code session on purpose.)
 
-> **Say:** "This private workspace is access-code gated and reviews only
-> bundled synthetic documents — there is deliberately no upload route while
-> the institutional storage and security controls are still being decided."
+> **Say:** "This access-code session is the one the hosted service gets: it
+> reviews only bundled synthetic documents, and there is deliberately no
+> upload route while the institutional storage and security controls are
+> still being decided. The upload you saw a minute ago exists only for the
+> local demo educator sign-in."
 
 ### Beat 4 — Review a course handout (2 min)
 
@@ -173,7 +255,7 @@ Click **Sign out** in the navy sidebar. You land back on the login page with
 > every step and honesty about the limits. What you never saw today: an
 > overall score, a compliance claim, or a certification. That's deliberate."
 
-## 3. Render deploy path (summary)
+## 4. Render deploy path (summary)
 
 Full owner runbook: [private-staging-service.md](private-staging-service.md).
 
@@ -203,7 +285,7 @@ tesseract. Hosted reviews complete and disclose those skipped checks under
 *Review completeness*; the smoke test reports the OCR path as SKIP there, not
 a failure.
 
-## 4. Pre-demo checklist
+## 5. Pre-demo checklist
 
 Run through this the night before *and* the morning of:
 
@@ -213,6 +295,9 @@ Run through this the night before *and* the morning of:
       it and expect exit code 0:
       `python3.11 scripts/staging_smoke.py --base-url http://127.0.0.1:8787
       --access-code "<printed code>"`
+- [ ] Have a real PDF ready for the opening act (any course handout under
+      50 MB); rehearse the upload once so the sponsored card and the sealed
+      download hold no surprises.
 - [ ] `tesseract --version` works on the demo machine (Beat 8); if not,
       decide now to narrate the OCR decline instead.
 - [ ] If you plan to click **Open local reviewer** on the landing page, start

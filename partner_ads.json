@@ -1,0 +1,41 @@
+{
+  "disclosure": "Sponsored — supporting this free tool",
+  "rotation_seconds": 12,
+  "partners": [
+    {
+      "id": "coastline-foundation-scholarships",
+      "name": "Coastline College Foundation",
+      "tagline": "Corny slogans, real impact",
+      "message": "This barrier removal is brought to you by the Coastline College Foundation. Your gift: also barrier-removing. Coincidence? Give today.",
+      "cta_label": "Give to the Coastline College Foundation"
+    },
+    {
+      "id": "coastline-foundation-title",
+      "name": "Coastline College Foundation",
+      "tagline": "Give where you learn",
+      "message": "Like a good document title, a Foundation gift tells every student exactly what to expect: support. Give to Coastline today.",
+      "cta_label": "Support student success"
+    },
+    {
+      "id": "coastline-foundation-alt-text",
+      "name": "Coastline College Foundation",
+      "tagline": "Be the description",
+      "message": "Alt text describes what matters in an image. Donors describe what matters at Coastline. Be the description — give today.",
+      "cta_label": "Give to the Coastline College Foundation"
+    },
+    {
+      "id": "coastline-foundation-semester",
+      "name": "Coastline College Foundation",
+      "tagline": "Real impact, campus-wide",
+      "message": "We helped fix the metadata. You can help fix a student's semester. Scholarships still need funding, and the Foundation thanks you in advance.",
+      "cta_label": "Fund a scholarship"
+    },
+    {
+      "id": "partner-slot",
+      "name": "Your partner here",
+      "tagline": "This space supports free accessibility reviews",
+      "message": "A clearly labeled, first-party sponsor message could appear here. No trackers, no third-party scripts, and results are never delayed — ever.",
+      "cta_label": "Learn about sponsoring"
+    }
+  ]
+}
