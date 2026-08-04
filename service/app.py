@@ -336,7 +336,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     result_hash = str(detail.get("remediated_sha256") or "").removeprefix("sha256:")[:10]
                     hashes = f" · <span class=mono>{escape(source_hash)}… → {escape(result_hash)}…</span>" if source_hash and result_hash else ""
                     label = REMEDIATION_LABELS.get(row["kind"], row["kind"])
-                    provenance_items.append(f"<li><strong>{escape(label)}</strong> · {escape(_when(row['created_at']))}{hashes}</li>")
+                    provenance_items.append(f"<li><strong>{escape(label)}</strong> <span class=tag>{escape(row['kind'])}</span> · {escape(_when(row['created_at']))}{hashes}</li>")
                 provenance = "".join(provenance_items) or "<li>No recheck has been applied to this version.</li>"
                 cleanup = f"<details><summary>Remove this synthetic record</summary><p>This removes this version and any rechecked copies from the local staging store.</p><form method=post action=\"/documents/{escape(document_id)}/delete\"><label><input type=checkbox name=confirmed value=yes required> I want to remove these synthetic records.</label><div class=actions><button class=secondary>Remove records</button></div></form></details>"
                 if terminal:

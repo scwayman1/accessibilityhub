@@ -562,6 +562,7 @@ class StagingServiceTests(unittest.TestCase):
         _, _, page = self.request(f"/documents/{child_id}")
         text = page.decode()
         self.assertIn("Title &amp; language", text)
+        self.assertIn("<span class=tag>metadata</span>", text)  # raw kind stays visible
         self.assertIn(f"{source_hash}… → {result_hash}…", text)
 
     def test_error_surfaces_never_show_raw_python_exception_text(self):
