@@ -55,6 +55,9 @@ Setting a name is not an integration. This repository has no object-store, scann
 
 ## Local run
 
+The one-command path is `scripts/demo_up.sh` (it generates the secrets, prints
+the access code, and starts the service). The manual equivalent:
+
 ```sh
 export HUB_ENV=development
 export HUB_STAGING_ACCESS_CODE='choose-a-local-code'
@@ -64,6 +67,21 @@ python3.11 -m service
 ```
 
 Open `http://127.0.0.1:8787/login`. Use only the bundled synthetic fixture.
+
+Port contract: the service honors `PORT` first, then `HUB_PORT`, and defaults
+to `8787` when neither is set (`service/__main__.py`). `scripts/demo_up.sh`
+accepts `HUB_PORT` and maps it through for you.
+
+After any deploy or environment change, verify the running service with the
+repeatable smoke test:
+
+```sh
+python3.11 scripts/staging_smoke.py --base-url http://127.0.0.1:8787 \
+    --access-code "$HUB_STAGING_ACCESS_CODE"
+```
+
+Exit code 0 means every required check passed; run it against the hosted URL
+after every Render deploy as well.
 
 ## Hosted synthetic testing (explicit opt-in)
 

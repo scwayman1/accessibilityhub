@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local-only deterministic PDF evidence checker for Coastline Spike 001.
+"""Local-only deterministic PDF evidence checker for the Coastline College Accessibility Hub.
 
 This tool intentionally produces technical evidence and review queues, not a
 conformance or legal determination. It never uploads, rewrites, or transmits
@@ -135,7 +135,14 @@ def iter_figures(struct_root: Any) -> list[dict[str, Any]]:
         seen.add(identity)
         if node.get("/S") == "/Figure":
             # /Alt present counts as decided — an explicit empty string marks decorative.
-            figures.append({"element": node, "has_alt": node.get("/Alt") is not None})
+            figures.append({
+                "element": node,
+                "has_alt": node.get("/Alt") is not None,
+                # /Pg (when present) anchors the figure to its page. dict.get
+                # returns the raw stored reference, so keep it unresolved for
+                # identity matching against reader.pages references.
+                "page_ref": node.get("/Pg"),
+            })
         kids = node.get("/K")
         if kids is None:
             return
@@ -154,9 +161,11 @@ def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
     image_check = run(["docker", "image", "inspect", VERAPDF_IMAGE], timeout=10)
     if image_check["returncode"] != 0:
         reason = (
-            "Docker is not installed, so the containerized veraPDF validator did not run."
+            "The full-standard validator (veraPDF) could not run because its container runtime (Docker) "
+            "is not available on this computer, so that check was skipped."
             if tool_missing(image_check)
-            else "Pinned veraPDF image is unavailable locally; the reviewer will not pull images during a check."
+            else "The full-standard validator (veraPDF) is not set up on this computer, so that check was skipped. "
+                 "The reviewer will not pull images during a check."
         )
         return {
             "image": VERAPDF_IMAGE,
@@ -201,9 +210,9 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
     if not pdf.exists() or not pdf.is_file():
         raise ValueError("Input must be an existing local file.")
     if pdf.suffix.lower() != ".pdf":
-        raise ValueError("Only .pdf files are accepted in Spike 001.")
+        raise ValueError("Only .pdf files are accepted by this reviewer.")
     if pdf.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError(f"Input exceeds {MAX_FILE_BYTES // (1024 * 1024)} MB spike limit.")
+        raise ValueError(f"This PDF is larger than the {MAX_FILE_BYTES // (1024 * 1024)} MB review limit.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     findings: list[dict[str, str]] = []
@@ -236,8 +245,10 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
     if tool_missing(qpdf):
         findings.append(finding(
             "tool_failure_or_unsupported", "PDF.INTAKE.QPDF_UNAVAILABLE", "medium", "reviewer toolchain",
-            "qpdf is not installed on this computer, so the structural integrity check did not run.",
-            "Install qpdf to include structural integrity evidence in future reviews.",
+            "The structural integrity checker (qpdf) is not available on this computer, so that check was skipped. "
+            "Everything else in this review still stands.",
+            "No action is needed on the document. To include structural integrity checks, "
+            "run the review on a computer where qpdf is installed.",
         ))
         not_assessed.append({
             "area": "structural integrity (qpdf)",
@@ -266,7 +277,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
         findings.append(finding(
             "blocking_technical_failure", "PDF.INTAKE.ENCRYPTED", "high", "document",
             (encryption_probe["stdout"] or encryption_probe["stderr"] or "qpdf reported encrypted content").strip()[:1000],
-            "Do not process this file in the spike; request an authorized unencrypted source copy.",
+            "This file cannot be reviewed while it is password-protected; request an authorized unencrypted copy from the document owner.",
         ))
 
     try:
@@ -287,7 +298,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
         findings.append(finding(
             "blocking_technical_failure", "PDF.INTAKE.ENCRYPTED", "high", "document catalog",
             "PDF is encrypted or password-protected.",
-            "Do not process this file in the spike; request an authorized unencrypted source copy.",
+            "This file cannot be reviewed while it is password-protected; request an authorized unencrypted copy from the document owner.",
         ))
         encrypted = True
         reader = None
@@ -329,9 +340,14 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "evidence": f"A primary language ({metadata['language']}) is declared in the document catalog.",
             })
         if not metadata["marked"] or not metadata["has_structure_tree"]:
+            missing = []
+            if not metadata["marked"]:
+                missing.append("is not marked as a tagged PDF")
+            if not metadata["has_structure_tree"]:
+                missing.append("has no structure tree")
             findings.append(finding(
                 "review_required", "PDF.STRUCTURE.SEMANTICS", "high", "document catalog",
-                f"Marked={metadata['marked']}; structure_tree={metadata['has_structure_tree']}.",
+                f"This PDF {' and '.join(missing)}, so screen readers get no headings, lists, or reading order.",
                 "Review the original source and PDF tag/reading-order behavior with an accessibility specialist.",
             ))
         else:
@@ -357,6 +373,20 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 links.append({"index": len(links), "page": index, **link})
         figures = iter_figures(indirect(root.get("/StructTreeRoot"))) if metadata["has_structure_tree"] else []
         figures_missing_alt = sum(1 for figure in figures if not figure["has_alt"])
+        # Anchor structure-tree figures back to page numbers via /Pg so the
+        # alt-text finding can say which pages carry undescribed figures.
+        page_index_by_ref: dict[tuple[int, int], int] = {}
+        for page_number, page in enumerate(reader.pages, start=1):
+            reference = getattr(page, "indirect_reference", None)
+            if reference is not None:
+                page_index_by_ref[(reference.idnum, reference.generation)] = page_number
+        figure_pages_missing_alt: list[int] = sorted({
+            page_index_by_ref[key]
+            for figure in figures
+            if not figure["has_alt"]
+            for key in [(getattr(figure["page_ref"], "idnum", None), getattr(figure["page_ref"], "generation", None))]
+            if key in page_index_by_ref
+        })
         metadata.update({
             "image_objects": images,
             "link_annotations": len(links),
@@ -369,8 +399,8 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
         if pages_without_text:
             findings.append(finding(
                 "review_required", "PDF.TEXT_LAYER", "high", "document pages",
-                f"{len(pages_without_text)} of {len(reader.pages)} pages had no extractable text using pypdf.",
-                "Classify as scan/image-based or parser-limited; route for OCR assessment and human review.",
+                f"{len(pages_without_text)} of {len(reader.pages)} pages had no extractable text — they are likely scans or pictures of words.",
+                "If a digital original exists, use it. Otherwise add an OCR text layer to a copy, then have a person check the recognized text.",
                 pages=pages_without_text,
             ))
         if figures_missing_alt:
@@ -378,6 +408,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "deterministic_defect", "PDF.IMAGES.ALT_MISSING", "high", "structure tree /Figure elements",
                 f"{figures_missing_alt} of {len(figures)} tagged figure element(s) have no alternative text (/Alt).",
                 "Write a description for each figure (or mark it decorative); the fix is applied to a copy and rechecked.",
+                pages=figure_pages_missing_alt,
             ))
         elif figures:
             strengths.append({
@@ -407,11 +438,16 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "status": "machine_verified",
                 "evidence": f"All {len(links)} link annotation(s) carry an accessible description.",
             })
-        if links:
+        # Only ask for a contextual purpose review while links still lack names.
+        # Once every link carries a verified accessible description, the named
+        # links speak for themselves and this reminder would only second-guess
+        # the verified strength recorded above.
+        if unnamed_links:
             findings.append(finding(
                 "review_required", "PDF.LINKS.PURPOSE", "low", "link annotations",
                 f"Detected {len(links)} link annotation(s). Link purpose requires contextual review.",
                 "Review link text and destination purpose in context.",
+                pages=[link["page"] for link in links],
             ))
 
     qpdf_blocking = not tool_missing(qpdf) and qpdf["returncode"] != 0
@@ -421,7 +457,8 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             findings.append(finding(
                 "tool_failure_or_unsupported", "PDF.VERAPDF.UNAVAILABLE", "medium", "reviewer toolchain",
                 (verapdf.get("stderr") or "The veraPDF validator did not run.").strip()[:1000],
-                "Make the pinned veraPDF image available locally to include UA-1 validator evidence in future reviews.",
+                "No action is needed on the document. To include full-standard validator evidence, "
+                "run the review on a computer where the pinned veraPDF validator is set up.",
             ))
             not_assessed.append({
                 "area": "PDF/UA-1 validator (veraPDF)",
@@ -444,7 +481,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
 
     report = {
         "schema_version": "0.1",
-        "spike": "001-pdf-deterministic-checker",
+        "checker": "pdf-deterministic-checker",
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "input": {
             "path": str(pdf.resolve()),
@@ -472,7 +509,7 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
 
 def markdown(report: dict[str, Any]) -> str:
     rows = [
-        "# Coastline Accessibility Studio — Spike 001 report",
+        "# Coastline College Accessibility Hub — document review report",
         "",
         "## Boundary",
         "",
@@ -508,15 +545,17 @@ def markdown(report: dict[str, Any]) -> str:
     rows.extend(["## Not assessed by this tool", ""])
     for item in report.get("not_assessed", []):
         rows.append(f"- {item['area']}: {item['reason']}")
+    report_path = report["verapdf"].get("report_path")
     rows.extend([
         "",
         "## Raw validator artifact",
         "",
-        f"- {report['verapdf']['report_path']}",
+        f"- {report_path}" if report_path else "No validator artifact was produced for this review.",
         "",
-        "## Verdict",
+        "## What this review can say",
         "",
-        "Pending human review of the normalized findings and raw validator artifact.",
+        "The findings above are technical evidence awaiting human review. "
+        "This review produces no overall pass, score, or conformance result.",
     ])
     return "\n".join(rows)
 
