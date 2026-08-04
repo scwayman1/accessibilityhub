@@ -57,6 +57,13 @@ class StagingServiceTests(unittest.TestCase):
         self.assertTrue(status.startswith("303"))
         self.cookie = headers["Set-Cookie"].split(";", 1)[0]
 
+    def login_sso(self):
+        # The demo educator session (development only): unlocks the real
+        # local-upload workspace that access-code sessions never see.
+        status, headers, _ = self.request("/login/sso", "POST")
+        self.assertTrue(status.startswith("303"))
+        self.cookie = headers["Set-Cookie"].split(";", 1)[0]
+
     def wait_for_result(self, document_id):
         for _ in range(160):
             job = self.repository.latest_job("coastline-staging", document_id)
@@ -85,7 +92,7 @@ class StagingServiceTests(unittest.TestCase):
         self.assertIn(b"coastline-college-logo-white.png", self.request("/app")[2])
 
     def test_private_workspace_uses_labeled_workflow_steps_and_finding_chips(self):
-        self.login()
+        self.login_sso()
         status, _, workspace = self.request("/app")
         self.assertTrue(status.startswith("200"))
         for label in (b"Review", b"Understand", b"Improve", b"Verify"):
@@ -94,11 +101,16 @@ class StagingServiceTests(unittest.TestCase):
         self.assertIn(b"class=sidebar", workspace)
         self.assertIn(b'href="#main-content"', workspace)
         self.assertEqual(workspace.count(b'aria-current="step"'), 1)
-        self.assertEqual(workspace.count(b"Start a sample review"), 1)
-        self.assertIn(b"Synthetic demo only", workspace)
-        self.assertIn(b"Real-document upload is unavailable", workspace)
-        self.assertNotIn(b'type="file"', workspace)
-        self.assertNotIn(b"type=file", workspace)
+        # Development mode: the primary card is the real local upload, and the
+        # bundled samples move to a secondary "or try a sample" row.
+        self.assertIn(b"Upload your course material", workspace)
+        self.assertIn(b"type=file", workspace)
+        self.assertIn(b'accept="application/pdf,.pdf"', workspace)
+        self.assertIn(b'enctype="multipart/form-data"', workspace)
+        self.assertIn(b"Or try a sample", workspace)
+        self.assertIn(b"Try the course handout", workspace)
+        self.assertIn(b"Try the scanned sample", workspace)
+        self.assertIn(b"Development workspace", workspace)
         self.assertIn(b":focus-visible", workspace)
         self.assertIn(b"@media(max-width:900px)", workspace)
         self.assertIn(b".app-shell { grid-template-columns:1fr }", workspace)
@@ -297,7 +309,8 @@ class StagingServiceTests(unittest.TestCase):
             self.assertIn(b"Synthetic demo only", page)
             self.assertIn(b'action="/documents/synthetic"', page)
             self.assertNotIn(b"multipart/form-data", page)
-            self.assertNotIn(b"type=file", page)
+            self.assertNotIn(b"<input id=upload-file", page)
+            self.assertNotIn(b'action="/documents/upload"', page)
             for path in ("/documents/upload", "/api/real-documents", "/api/upload-authorizations"):
                 status, _, _ = self.request(path, "POST")
                 self.assertTrue(status.startswith("404"), path)
@@ -669,6 +682,362 @@ class StagingServiceTests(unittest.TestCase):
         self.assertEqual(resolve_port({"PORT": "  9002  "}), 9002)
         with self.assertRaises(SystemExit):
             resolve_port({"PORT": "not-a-port"})
+
+    # ------------------------------------------------------------------
+    # Teacher happy path: stub SSO, dev-only upload, sponsored loader,
+    # summary chips, one-click fixes, produced (sealed) download, and the
+    # staging-mode boundary regression.
+    # ------------------------------------------------------------------
+
+    def _multipart(self, filename, payload, field="file", boundary="hubtestboundary"):
+        body = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode() + payload + f"\r\n--{boundary}--\r\n".encode()
+        return body, f"multipart/form-data; boundary={boundary}"
+
+    def _upload(self, filename, payload):
+        body, content_type = self._multipart(filename, payload)
+        return self._raw_request("/documents/upload", body, content_type)
+
+    def _controlled_staging_app(self):
+        """Hosted staging with EVERY flag and control present — the strongest adversary."""
+        controls = (
+            "HUB_PRIVATE_OBJECT_STORAGE", "HUB_MALWARE_SCAN_GATE", "HUB_WORKER_ISOLATION_ATTESTATION",
+            "HUB_TENANT_AUTH_ISSUER", "HUB_LIFECYCLE_POLICY_ID", "HUB_AUDIT_SINK",
+        )
+        settings = ServiceSettings(
+            "staging", Path(self.temp.name) / "boundary", "synthetic-only-code", "s" * 48,
+            controls, allow_hosted_synthetic=True,
+        )
+        repository = StagingRepository(settings.data_dir)
+        worker = AssessmentWorker(repository)
+        self.app, self.repository, self.worker = create_app(settings, repository, worker), repository, worker
+        return settings
+
+    def test_dev_login_shows_stub_sso_above_access_code_and_signs_in_demo_educator(self):
+        status, _, page = self.request("/login")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Sign in with your Coastline Microsoft account", page)
+        self.assertIn("Demo sign-in — no Microsoft account is contacted.".encode(), page)
+        # The stub button renders ABOVE the access-code form.
+        self.assertLess(page.index(b"Coastline Microsoft account"), page.index(b"Access code"))
+        self.assertIn(b'action="/login/sso"', page)
+        status, headers, _ = self.request("/login/sso", "POST")
+        self.assertTrue(status.startswith("303"))
+        self.assertEqual(headers["Location"], "/app")
+        self.cookie = headers["Set-Cookie"].split(";", 1)[0]
+        status, _, workspace = self.request("/app")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Jordan Rivera, Faculty", workspace)
+        self.assertIn(b"Signed in", workspace)
+        self.cookie = ""
+
+    def test_hosted_login_keeps_access_code_only_and_sso_route_404s(self):
+        self._controlled_staging_app()
+        status, _, page = self.request("/login")
+        self.assertTrue(status.startswith("200"))
+        self.assertNotIn(b"Microsoft", page)
+        self.assertNotIn(b'action="/login/sso"', page)
+        self.assertIn(b"Access code", page)
+        status, _, _ = self.request("/login/sso", "POST")
+        self.assertTrue(status.startswith("404"))
+
+    def test_dev_upload_stores_educator_upload_and_runs_the_same_review(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        pdf = synthetic_handout_pdf()
+        status, headers, _ = self._upload("My Course – Week 5_notes.pdf", pdf)
+        self.assertTrue(status.startswith("303"), status)
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        stored = self.repository.document("coastline-staging", document_id)
+        self.assertEqual(stored["source_kind"], "educator_upload")
+        self.assertTrue(stored["filename"].endswith(".pdf"))
+        self.assertNotIn("/", stored["filename"])
+        self.assertEqual(self.repository.document_bytes("coastline-staging", document_id), pdf)
+        job = self.wait_for_result(document_id)
+        self.assertEqual(job["state"], "succeeded")
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertIn(b"Your upload", page)
+        self.assertIn(b"Apply suggested fixes and recheck", page)
+        with self.repository._connect() as db:
+            actions = [row["action"] for row in db.execute("SELECT action FROM audit_events")]
+        self.assertIn("educator_document_uploaded", actions)
+
+    def test_dev_access_code_session_keeps_the_synthetic_only_workspace(self):
+        # The smoke script signs in with the access code against a dev
+        # instance and must find the classic sample workspace: no file input,
+        # no upload route. Only the demo educator (stub SSO) session uploads.
+        from service.fixtures import synthetic_handout_pdf
+        self.login()
+        status, _, workspace = self.request("/app")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Start a sample review", workspace)
+        self.assertNotIn(b"Upload your course material", workspace)
+        self.assertNotIn(b"type=file", workspace)
+        self.assertNotIn(b'action="/documents/upload"', workspace)
+        self.assertIn(b"Real-document upload opens with the demo educator sign-in.", workspace)
+        before = len(self.repository.list_documents("coastline-staging"))
+        status, _, _ = self._upload("real-course-material.pdf", synthetic_handout_pdf())
+        self.assertTrue(status.startswith("404"), status)
+        self.assertEqual(len(self.repository.list_documents("coastline-staging")), before)
+
+    def test_upload_rejects_non_pdf_oversized_and_missing_file(self):
+        self.login_sso()
+        before = len(self.repository.list_documents("coastline-staging"))
+        # Wrong extension fails closed with friendly copy.
+        status, _, page = self._upload("notes.txt", b"%PDF-1.4 not really")
+        self.assertTrue(status.startswith("400"), status)
+        self.assertIn(b"Choose a PDF file.", page)
+        # PDF extension but non-PDF bytes.
+        status, _, page = self._upload("notes.pdf", b"MZ this is an executable")
+        self.assertTrue(status.startswith("400"))
+        self.assertIn(b"does not look like a PDF", page)
+        # A hostile Content-Length over the cap is refused before reading.
+        status, _, page = self._raw_request(
+            "/documents/upload", b"", "multipart/form-data; boundary=x",
+            content_length=str(80 * 1024 * 1024),
+        )
+        self.assertTrue(status.startswith("413"), status)
+        self.assertIn(b"50 MB", page)
+        # No file part at all.
+        status, _, page = self._raw_request(
+            "/documents/upload", b"fixture=handout", "application/x-www-form-urlencoded")
+        self.assertTrue(status.startswith("400"))
+        self.assertIn(b"Choose a PDF file", page)
+        self.assertEqual(len(self.repository.list_documents("coastline-staging")), before)
+
+    def test_sponsored_card_shows_while_running_and_never_after_terminal(self):
+        self.worker.stop()  # Keep the job queued so the pending page is observable.
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        status, _, page = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b">Sponsored</span>", page)
+        self.assertIn(b'aria-label="Sponsored message"', page)
+        self.assertIn(b'class="panel sponsor-card"', page)
+        # Server-rendered and first-party only: no scripts, no external assets.
+        self.assertNotIn(b"<script", page)
+        self.assertNotIn(b"https://", page)
+        self.assertIn(b"never delay your results", page)
+        # The refresh cadence is untouched by the ad.
+        self.assertIn(b'http-equiv="refresh"', page)
+        ads = json.loads(Path("partner_ads.json").read_text(encoding="utf-8"))
+        self.assertTrue(any(partner["name"].encode() in page for partner in ads["partners"]))
+        self.assertIn(ads["disclosure"].encode(), page)
+        # The moment the job is terminal, results render with no sponsor card.
+        self.assertTrue(self.worker.run_once())
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertNotIn(b'class="panel sponsor-card"', page)
+        self.assertNotIn(b'aria-label="Sponsored message"', page)
+        self.assertNotIn(b">Sponsored</span>", page)
+        self.assertIn(b"Signals and next actions", page)
+
+    def test_missing_or_broken_partner_ads_file_never_breaks_the_review_flow(self):
+        import service.app as app_module
+        self.worker.stop()
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        original = app_module.PARTNER_ADS_PATH
+        try:
+            app_module.PARTNER_ADS_PATH = Path(self.temp.name) / "no-such-ads.json"
+            status, _, page = self.request(f"/documents/{document_id}")
+            self.assertTrue(status.startswith("200"))
+            self.assertNotIn(b'class="panel sponsor-card"', page)
+            self.assertIn(b"Looking for useful accessibility signals", page)
+            broken = Path(self.temp.name) / "broken-ads.json"
+            broken.write_text("{not json", encoding="utf-8")
+            app_module.PARTNER_ADS_PATH = broken
+            status, _, page = self.request(f"/documents/{document_id}")
+            self.assertTrue(status.startswith("200"))
+            self.assertNotIn(b'class="panel sponsor-card"', page)
+        finally:
+            app_module.PARTNER_ADS_PATH = original
+
+    def test_summary_chip_row_math_matches_the_lane_counts(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        result = self.wait_for_result(document_id)["result"]
+        counts = {"needs_attention": 0, "review_recommended": 0, "verified_signal": 0, "not_assessed": 0}
+        for signal in result["signals"]:
+            counts[signal["lane"]] += 1
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertIn(b"summary-chips", page)
+        phrases = {
+            "needs_attention": ("needs attention", "need attention"),
+            "review_recommended": ("to review", "to review"),
+            "verified_signal": ("verified", "verified"),
+            "not_assessed": ("not assessed", "not assessed"),
+        }
+        for lane, count in counts.items():
+            singular, plural = phrases[lane]
+            expected = f"{count} {singular if count == 1 else plural}".encode()
+            self.assertIn(expected, page, lane)
+        # The chip row sits above the lane cards.
+        self.assertLess(page.index(b"summary-chips"), page.index(b"Signals and next actions"))
+
+    def test_one_click_apply_suggested_fixes_batches_the_metadata_remediation(self):
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(document_id)
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertIn(b"Apply suggested fixes and recheck", page)
+        self.assertIn(b'<input type=hidden name=title value="Week 3 Course Handout">', page)
+        self.assertIn(b'<input type=hidden name=language value="en-US">', page)
+        status, headers, _ = self.request(
+            f"/documents/{document_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        self.assertTrue(status.startswith("303"))
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        after = self.wait_for_result(child_id)["result"]
+        verified = {item["rule_id"] for item in after["signals"] if item["lane"] == "verified_signal"}
+        self.assertIn("PDF.METADATA.TITLE", verified)
+        self.assertIn("PDF.METADATA.LANGUAGE", verified)
+        # The recheck resolved the metadata defects, so the one-click offer is gone
+        # on the rechecked version (it is a recheck page, not a first review).
+        _, _, child_page = self.request(f"/documents/{child_id}")
+        self.assertNotIn(b"Apply suggested fixes and recheck", child_page)
+
+    def test_produce_seals_a_download_with_one_added_page_and_records_provenance(self):
+        from pypdf import PdfReader
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(source_id)
+        _, headers, _ = self.request(
+            f"/documents/{source_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(child_id)
+        _, _, page = self.request(f"/documents/{child_id}")
+        self.assertIn(b"Produce your document", page)
+        self.assertIn(b"A review record, not a certification.", page)
+        self.assertIn(b"seal-badge", page)
+        self.assertIn(b"Reviewed &amp; improved", page)
+        self.assertIn(f'href="/documents/{child_id}/produced"'.encode(), page)
+
+        source_bytes = self.repository.document_bytes("coastline-staging", child_id)
+        status, headers, sealed = self.request(f"/documents/{child_id}/produced")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertEqual(headers["Content-Type"], "application/pdf")
+        self.assertIn("attachment", headers["Content-Disposition"])
+        self.assertIn('filename="coastline-synthetic-course-handout.sealed.pdf"', headers["Content-Disposition"])
+        self.assertTrue(sealed.startswith(b"%PDF"))
+        source_reader = PdfReader(io.BytesIO(source_bytes))
+        sealed_reader = PdfReader(io.BytesIO(sealed))
+        self.assertEqual(len(sealed_reader.pages), len(source_reader.pages) + 1)
+        # Prior pages keep byte-identical extracted text (anti-vandal mirror).
+        for index, source_page in enumerate(source_reader.pages):
+            self.assertEqual(sealed_reader.pages[index].extract_text() or "",
+                             source_page.extract_text() or "")
+        final_text = sealed_reader.pages[-1].extract_text() or ""
+        self.assertIn("Reviewed & improved with Coastline College Accessibility Hub", final_text)
+        self.assertIn("A review record, not a certification.", final_text)
+        # Provenance kind "seal" recorded once via the remediation machinery.
+        seals = [row for row in self.repository.remediations("coastline-staging", child_id) if row["kind"] == "seal"]
+        self.assertEqual(len(seals), 1)
+        provenance = seals[0]["provenance"]
+        self.assertEqual(provenance["kind"], "seal")
+        self.assertTrue(provenance["mutates_document"])
+        self.assertTrue(provenance["source_sha256"].startswith("sha256:"))
+        self.assertTrue(provenance["result_sha256"].startswith("sha256:"))
+        # The document record itself is untouched: producing applies nothing new.
+        self.assertEqual(self.repository.document_bytes("coastline-staging", child_id), source_bytes)
+        # Repeated downloads do not duplicate the provenance row.
+        status, _, again = self.request(f"/documents/{child_id}/produced")
+        self.assertTrue(status.startswith("200"))
+        self.assertTrue(again.startswith(b"%PDF"))
+        seals = [row for row in self.repository.remediations("coastline-staging", child_id) if row["kind"] == "seal"]
+        self.assertEqual(len(seals), 1)
+
+    def test_produce_refuses_direct_url_on_first_review_with_needs_attention(self):
+        # The route mirrors the produce-card eligibility: a first review that
+        # still has needs-attention signals cannot be produced by URL alone.
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        result = self.wait_for_result(source_id)["result"]
+        self.assertTrue(any(s["lane"] == "needs_attention" for s in result["signals"]))
+        _, _, page = self.request(f"/documents/{source_id}")
+        self.assertNotIn(b"Produce your document", page)
+        status, _, body = self.request(f"/documents/{source_id}/produced")
+        self.assertTrue(status.startswith("409"), status)
+        self.assertFalse(body.startswith(b"%PDF"))
+        self.assertIn(b"not ready to produce", body.lower())
+        seals = [row for row in self.repository.remediations("coastline-staging", source_id) if row["kind"] == "seal"]
+        self.assertEqual(seals, [])
+
+    def test_produce_fails_soft_when_the_seal_module_is_unavailable(self):
+        import sys
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(source_id)
+        _, headers, _ = self.request(
+            f"/documents/{source_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(child_id)
+        saved = sys.modules.pop("tina.seal", None)
+        sys.modules["tina.seal"] = None  # forces ImportError on the lazy import
+        try:
+            status, _, page = self.request(f"/documents/{child_id}")
+            self.assertTrue(status.startswith("200"))
+            self.assertIn(b"Producing is not available yet", page)
+            self.assertNotIn(b"/produced", page)
+            status, _, page = self.request(f"/documents/{child_id}/produced")
+            self.assertTrue(status.startswith("503"))
+            self.assertIn(b"review itself is unaffected", page)
+        finally:
+            del sys.modules["tina.seal"]
+            if saved is not None:
+                sys.modules["tina.seal"] = saved
+
+    def test_staging_mode_still_has_no_upload_sso_or_produced_route_regression(self):
+        """SECURITY BOUNDARY: hosted staging refuses uploads exactly as before,
+        no matter which flags or control references are present."""
+        from service.fixtures import synthetic_handout_pdf
+        settings = self._controlled_staging_app()
+        self.assertTrue(settings.hosted_boundary_ready)
+        self.assertTrue(settings.synthetic_intake_ready)
+        self.login()
+        # Workspace: samples only, refusal note intact, no upload form.
+        status, _, workspace = self.request("/app")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Real-document upload is not available in this environment.", workspace)
+        self.assertIn(b"Real-document upload is unavailable.", workspace)
+        self.assertNotIn(b"<input id=upload-file", workspace)
+        self.assertNotIn(b'action="/documents/upload"', workspace)
+        self.assertNotIn(b"Upload your course material", workspace)
+        # The upload route does not exist: a real PDF multipart POST 404s and
+        # stores nothing.
+        before = len(self.repository.list_documents("coastline-staging"))
+        status, _, _ = self._upload("real-course-material.pdf", synthetic_handout_pdf())
+        self.assertTrue(status.startswith("404"), status)
+        self.assertEqual(len(self.repository.list_documents("coastline-staging")), before)
+        # Stub SSO does not exist either.
+        status, _, _ = self.request("/login/sso", "POST")
+        self.assertTrue(status.startswith("404"))
+        # Synthetic flow still works, but the produced route does not exist.
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(document_id)
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertNotIn(b"Produce your document", page)
+        status, _, _ = self.request(f"/documents/{document_id}/produced")
+        self.assertTrue(status.startswith("404"), status)
+        # Health payload still reports hosted intake closed.
+        payload = json.loads(self.request("/healthz")[2])
+        self.assertFalse(payload["hosted_intake_enabled"])
+        self.assertTrue(payload["synthetic_only"])
+        self.cookie = ""
 
     def test_service_files_and_doc_never_use_prohibited_outcome_language(self):
         """CI governance mirror for the files this boundary owns.
