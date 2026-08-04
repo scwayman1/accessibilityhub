@@ -22,6 +22,8 @@ services:
       # hosted document creation closed. It never enables uploads or real intake.
       - key: HUB_ALLOW_HOSTED_SYNTHETIC
         sync: false
+      - key: HUB_PUBLIC_ACCESS
+        value: true
       - key: HUB_PRIVATE_OBJECT_STORAGE
         sync: false
       - key: HUB_MALWARE_SCAN_GATE

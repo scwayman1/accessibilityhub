@@ -116,7 +116,7 @@ class Smoke:
                                status == 200 and final_url.endswith("/app"), f"landed on {final_url} ({status})")
         if not signed_in:
             return self.summarize()
-        self.check("workspace shows the Add material step", "Add material" in page)
+        self.check("workspace offers the sample review entry", "Start a sample review" in page)
 
         print("\n[3/7] Review a course handout")
         status, final_url, _ = self.request("/documents/synthetic", data={"fixture": "handout"})

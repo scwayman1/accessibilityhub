@@ -1,16 +1,16 @@
-# Private staging service boundary
+# Synthetic staging service boundary
 
-`service/` is the first deployable control plane for Accessibility Hub. It is separate from the public static landing and walkthrough. The service is intentionally limited to its bundled synthetic course handout while the Coastline data and infrastructure decisions are incomplete.
+`service/` is the deployable public demo for Accessibility Hub. It is intentionally limited to server-generated sample documents while the separate private real-intake controls remain incomplete and locked.
 
 ## Product shell
 
 The private service uses the unmodified official white Coastline College horizontal logo at `assets/coastline-college-logo-white.png`, sourced from Coastline's live header asset: `https://www.coastline.edu/_files/img/new-navigation-images/coastlinecollege_whitetext_800x240.png`. It is used only on the deep institutional-navy shell. The application does not create or recolor a Coastline mark, and it does not use GradRoots assets.
 
-The workspace palette anchors on Coastline navy `#003764`, with porcelain surfaces, selective light-blue interaction states (`#6BC4E8` / `#3CB4E5`), ocean controls, and copper only for progress/repair emphasis.
+The workspace uses a persistent Coastline navy `#003764` workflow rail, a cool-white canvas, pure-white work surfaces, and restrained cyan interaction states. It deliberately avoids beige surfaces and gradient-heavy presentation.
 
 ## What runs locally now
 
-With an explicit staging access code and session secret, the service provides:
+With the hosted synthetic opt-in and its required session configuration, the service provides:
 
 1. an authenticated browser session;
 2. a tenant-scoped synthetic document record persisted in SQLite;
@@ -25,7 +25,7 @@ The service calls the existing remediation implementations rather than duplicati
 - `tina.structure.StructureRemediation` for human-confirmed roles and reading order, including its page/text preservation verification.
 - `tina.ocr.OcrRemediation` for the bundled scanned handout, after an educator confirms they will review the generated text layer against the page image.
 
-The established local Fix Lab still owns the current semantic-description interaction. The service does not expose a general upload or AI route in this staging slice; it keeps that surface closed until its worker and storage controls are independently deployed.
+Advanced structure/OCR controls remain secondary to the guided title-and-language demo. The service does not expose a general upload or AI route; it keeps those surfaces closed until their worker, storage, identity, and audit controls are independently deployed.
 
 ## Protected boundary
 
@@ -87,7 +87,7 @@ after every Render deploy as well.
 
 `HUB_ALLOW_HOSTED_SYNTHETIC` is an environment variable and it is off by default. When `HUB_ENV=staging` **and** the value is exactly `true` (lowercase; `1`, `TRUE`, or `yes` do not count), the hosted web service allows the same bundled-synthetic-fixture intake that already runs in development:
 
-- still access-code gated — an unauthenticated request is redirected to `/login`;
+- optionally access-code gated when `HUB_PUBLIC_ACCESS` is unset; the checked-in public demo Blueprint sets it to exact `true`, exposing only this synthetic fixture experience;
 - still tenant-scoped — records live under the single staging tenant;
 - still audit-recorded — every create, remediation, and delete writes an append-only audit event;
 - still limited to the two fixtures generated in `service/fixtures.py`. The intake route accepts a fixture name, not a file.
@@ -111,12 +111,12 @@ after every Render deploy as well.
    - `HUB_ALLOW_HOSTED_SYNTHETIC` — the exact value `true`.
 4. Click **Apply** and wait for the first deploy to finish (service status **Live**).
 5. Open `https://<your-service>.onrender.com/healthz`. Confirm the JSON shows `"environment": "staging"`, `"login_ready": true`, `"hosted_synthetic_optin": true`, and — still — `"hosted_intake_enabled": false`.
-6. Open `https://<your-service>.onrender.com/login` and enter the access code.
-7. **Add material:** click **Review a course handout**. You land on the document page; it refreshes automatically while the queued assessment runs.
-8. **Review:** read the signal lanes. Expect **Needs attention** on the document title and primary language, alongside **Verified signal** and **Not assessed** lanes. Each signal stands alone; there is no overall result.
-9. **Improve:** in the Fix Lab, open **Update title and language**, keep or edit the suggested values, and click **Apply and recheck**. You are redirected to a new rechecked version with its own queued assessment.
-10. **Check again:** when the page stops refreshing, the title and language signals should now sit in the **Verified signal** lane, and the *remediation provenance* panel records what changed, when, with source and remediated hashes. The findings you repaired are resolved; the document is not thereby given any overall status.
-11. Optionally repeat with **Review a scanned handout** for the OCR path, and use **Remove this synthetic record** to clean up.
+6. Open `https://<your-service>.onrender.com/`. With the checked-in `HUB_PUBLIC_ACCESS=true` value, no access code is requested; this does not expose any upload or real-intake route.
+7. **Choose sample:** click **Start a sample review**. You land on a progress page that checks again every five seconds while the queued assessment runs.
+8. **Understand:** expect **Needs attention** on the document title and language, alongside the **Review recommended**, **Verified signal**, and **Not assessed** lanes. Each signal stands alone; there is no overall result.
+9. **Improve:** use **Fix the clearest issues**, keep or edit the suggested values, and click **Apply and recheck**. You are redirected to a new rechecked sample version.
+10. **Verify:** the completion banner reports the two newly verified signals, while the original sample remains unchanged. The provenance panel records the repair; the document is not given an overall status.
+11. Optionally repeat with **Try the scanned sample** for the OCR path, and use **Remove this synthetic record** to clean up.
 12. When testing is done, either delete the service or clear `HUB_ALLOW_HOSTED_SYNTHETIC` in the dashboard (the service restarts and hosted document creation closes again).
 
 ## Render configuration

@@ -1,7 +1,7 @@
 # Demo runbook — Coastline College Accessibility Hub
 
-The morning demo tells one story in about ten minutes: **Add material →
-Review → Improve → Check again**, with the product being honest at every step
+The morning demo tells one story in about ten minutes: **Review →
+Understand → Improve → Verify**, with the product being honest at every step
 about what it did check, what it could not check, and what changed. Nothing in
 this script claims a pass, score, or certification — because the product never
 produces one.
@@ -42,15 +42,19 @@ Open two browser tabs before starting:
 Open `http://127.0.0.1:8000/`.
 
 > **Say:** "This is the Accessibility Hub — a reviewer for course materials
-> built for educators, not auditors. One loop: add material, review, improve,
-> check again. It shows evidence, not grades."
+> built for educators, not auditors. One loop: review, understand, improve,
+> verify. It shows evidence, not grades."
 
-Point at the four-step journey on the page, then click **View sample review**.
+Point at the four-step model on the page (Review → Understand → Improve →
+Verify), then click **Try a guided sample** → **Start guided sample**.
 
-### Beat 2 — Sample walkthrough (1.5 min)
+### Beat 2 — Guided sample (1.5 min)
 
-You are on `sample-review.html` — a fixed illustration of one review of a
-synthetic handout, not a live workspace.
+You are on `sample-review.html` — an interactive walkthrough of one synthetic
+review. The four findings are real toggle buttons: click one (or use the
+keyboard) and the panel beside them reveals its evidence, student impact, next
+action, and verification step. A separate **Verified signal** strip and the
+**Improve/Verify** beats below show the fix-on-a-copy story.
 
 > **Say:** "Every detail lands in one of four lanes: *Needs attention* — the
 > machine found a concrete barrier; *Review recommended* — a person should
@@ -58,7 +62,8 @@ synthetic handout, not a live workspace.
 > *Not assessed* — things this tool honestly does not check. There is no
 > overall score anywhere, on purpose."
 
-Scroll through the lanes and the fix-and-recheck section, then switch tabs.
+Click through a finding or two, scroll past the Verified signal strip and the
+Improve/Verify beats, then switch tabs.
 
 ### Beat 3 — Staging login (0.5 min)
 
@@ -70,8 +75,8 @@ On the login tab, enter the access code from Terminal B.
 
 ### Beat 4 — Review a course handout (2 min)
 
-Click **Review a course handout**. The document page refreshes on its own
-while the queued assessment runs (a few seconds).
+Click **Start a sample review**. A progress page checks again every five
+seconds while the queued assessment runs (usually just a few).
 
 When signals appear, walk the lanes top to bottom:
 
@@ -89,7 +94,7 @@ If a **Review completeness** strip appears at the bottom, open it:
 
 ### Beat 5 — Improve: title and language (1.5 min)
 
-In the **Fix Lab** panel, open **Update title and language**. Keep the
+In the **Fix the clearest issues** panel (step *3 · Improve*), keep the
 suggested values ("Week 3 Course Handout", "en-US") and click **Apply and
 recheck**.
 
@@ -97,10 +102,11 @@ recheck**.
 > and the copy is immediately re-reviewed. We never mark our own homework
 > without checking it."
 
-### Beat 6 — Check again: the flip (1 min)
+### Beat 6 — Verify: the flip (1 min)
 
 The rechecked version's page refreshes while its assessment runs. When it
-settles, point at the lanes:
+settles, a green **Your improved copy is ready** banner reports "2
+accessibility signals are now verified in the recheck." Point at the lanes:
 
 > **Say:** "Title and language have moved from *Needs attention* to *Verified
 > signal* — each one is a separate piece of machine evidence. Two barriers are
@@ -109,8 +115,8 @@ settles, point at the lanes:
 
 ### Beat 7 — Change history and provenance (1 min)
 
-On the rechecked document page, open **4 · Check again — remediation
-provenance**.
+On the rechecked document page, open the **Remediation provenance** details
+under the signals.
 
 > **Say:** "Every change is recorded: what kind of repair, when, and the
 > before-and-after fingerprints of the file. Each recheck is a new version;
@@ -118,13 +124,13 @@ provenance**.
 
 ### Beat 8 — Scanned handout and OCR (1.5 min)
 
-Return to the **Workspace** and click **Review a scanned handout**. When
+Return to the **Workspace** and click **Try the scanned sample**. When
 signals appear:
 
 > **Say:** "This one is a scan — pictures of words. The review says no page
 > has extractable text, which means a screen reader gets nothing."
 
-In the Fix Lab, open **Add a text layer from this scan**, tick the
+In the Fix Lab panel, open **Add a text layer from this scan**, tick the
 confirmation checkbox, and click **Apply text layer and recheck**.
 
 > **Say:** "The recognized text is machine-generated, so the product requires
@@ -146,10 +152,10 @@ confirmation, and click **Remove records**.
 
 ### Beat 10 — Sign out (0.5 min)
 
-Click **Sign out** in the header. You land back on the login page with "You
-are signed out."
+Click **Sign out** in the navy sidebar. You land back on the login page with
+"You are signed out."
 
-> **Close:** "Add material, review, improve, check again — with evidence at
+> **Close:** "Review, understand, improve, verify — with evidence at
 > every step and honesty about the limits. What you never saw today: an
 > overall score, a compliance claim, or a certification. That's deliberate."
 

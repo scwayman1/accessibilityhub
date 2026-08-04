@@ -1,7 +1,7 @@
 # Coastline College Accessibility Hub
 
 A document accessibility reviewer built for educators, on one honest loop:
-**Add material → Review → Improve → Check again.**
+**Review → Understand → Improve → Verify.**
 
 It finds accessibility barriers in course PDFs, teaches why each one matters,
 fixes what a machine can safely fix (always on a copy, never the original),
@@ -31,8 +31,10 @@ completeness* instead of failing.
 
 ### 1. Public site (static)
 
-`index.html` (landing) and `sample-review.html` (a canned walkthrough of one
-review). Serve the repo root with any static server:
+`index.html` (the entry — `landing.html` is kept byte-identical to it) and
+`sample-review.html` (an interactive guided sample: four keyboard-operable
+finding toggles walk one synthetic review through Review → Understand →
+Improve → Verify). Serve the repo root with any static server:
 
 ```sh
 python3.11 -m http.server 8000
@@ -67,6 +69,16 @@ scripts/demo_up.sh
 It prints the login URL (`http://127.0.0.1:8787/login` by default) and a
 generated access code. Set `HUB_PORT` to change the port. Port contract: the
 service honors `PORT` first, then `HUB_PORT`, then defaults to `8787`.
+
+### Also in the tree: the locked real-intake foundation
+
+`service/real_intake/` holds the separate, locked foundation for eventual
+real-document intake — Postgres schema, Clerk-based owner auth, ClamAV
+scanning gate, consent/lifecycle/audit modules — with its own dependency set
+(`requirements-real-intake.txt`) and test suites (`tests/test_real_intake_*`).
+It is **not part of the demo**: no demo surface routes to it, and it stays
+closed until its controls are provisioned and verified per the real-intake
+documents linked below.
 
 ## Verify a running staging service
 
@@ -145,6 +157,7 @@ It writes `out/report.json` and `out/report.md`.
 | `local_reviewer.py` / `local_reviewer.html` | Loopback workbench server and UI |
 | `index.html`, `sample-review.html` | Public landing and canned walkthrough |
 | `service/` | Private staging service (WSGI app, worker, SQLite repository) |
+| `service/real_intake/` | Locked real-intake foundation (separate from the demo; not routed) |
 | `scripts/demo_up.sh` | One-command local staging demo launcher |
 | `scripts/staging_smoke.py` | Repeatable per-deploy smoke test |
 | `render.yaml` | Render Blueprint for the hosted staging service |
@@ -158,6 +171,12 @@ It writes `out/report.json` and `out/report.md`.
 - [Progress ledger — PRD phases vs shipped evidence](docs/progress-ledger.md)
 - [Product requirements — the accessibility learning journey](docs/prd-accessibility-learning-journey.md)
 - [AI tool chain, model router, BYOK and evaluation architecture](docs/ai-architecture-byok.md)
+- [Controlled real-intake Render safety plan](docs/render-controlled-real-intake.md)
+- [Clerk owner-only setup and activation checklist](docs/clerk-owner-only-setup.md)
+- [Controlled real-intake operations, deletion, and incident runbook](docs/real-intake-operations.md)
+- [Controlled real-intake verification matrix](docs/real-intake-control-matrix.md)
+- [Private ClamAV scanner specification](docs/clamav-private-scanner.md)
+- [Private real-intake provisioning checkpoint](docs/real-intake-provisioning-checkpoint.md)
 - [Next engineering loop — PRD and handoff](docs/next-loop-prd.md)
 - [Product assessment (July 2026)](docs/product-assessment-2026-07.md)
 - [Document editor vision](docs/document-editor-vision.md)
