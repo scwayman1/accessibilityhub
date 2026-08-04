@@ -1,13 +1,13 @@
 # Demo runbook — Coastline College Accessibility Hub
 
 The demo now tells the story in two acts. The **opening act** is the teacher
-happy path — sign in, upload your own PDF, watch the review, apply the
-suggested fixes, and download a copy with a review-summary page. The
-**deep-dive act** is the original ten-minute walkthrough of every lane,
-repair, and disclosure. Both acts stay honest at every step about what the
-product did check, what it could not check, and what changed. Nothing in this
-script claims a pass, score, or certification — because the product never
-produces one.
+happy path in three simple steps — sign in and drop a PDF, watch one
+processing screen do the improving for you, download the ready copy with its
+insight cards. Four interactions, zero decisions. The **deep-dive act** is the
+original ten-minute walkthrough of every lane, repair, and disclosure. Both
+acts stay honest at every step about what the product did check, what it could
+not check, and what changed. Nothing in this script claims a pass, score, or
+certification — because the product never produces one.
 
 ## 1. Sixty-second setup
 
@@ -38,14 +38,16 @@ Open two browser tabs before starting:
 1. `http://127.0.0.1:8000/` (landing)
 2. `http://127.0.0.1:8787/login` (staging — do not sign in yet)
 
-## 2. Opening act — the teacher happy path (~4 minutes)
+## 2. Opening act — three simple steps (~3 minutes)
 
 Development mode only (`scripts/demo_up.sh` runs it). Hosted staging keeps
 the access-code form and refuses uploads exactly as before — this whole act
 does not exist there. Bring one of your own PDFs, or make one on the spot;
-the review is most convincing on a file the room has never seen.
+the flow is most convincing on a file the room has never seen. The whole act
+is **four interactions**: the sign-in click, choosing the file, one button,
+and the download.
 
-### Beat A — Demo sign-in (0.5 min)
+### Step 1 — Land and drop (0.5 min)
 
 Open `http://127.0.0.1:8787/login`. Above the access-code form there is one
 button: **Sign in with your Coastline Microsoft account**, with the caption
@@ -54,64 +56,78 @@ button: **Sign in with your Coastline Microsoft account**, with the caption
 > **Say:** "One honest stub: this button only plays the part of campus SSO.
 > Nothing leaves this machine."
 
-Click it. You are signed in, and the sidebar shows the persona card
-**Jordan Rivera, Faculty** — "Signed in". (The access code still works too,
-but that session keeps the classic sample-only workspace; the upload
-workspace belongs to the demo educator sign-in.)
+Click it. You land directly on one centered card — eyebrow **Three simple
+steps**, headline **"Make your course material ready for students."**, and
+the lead "Drop in a PDF (up to 50 MB). We review it, apply safe improvements
+to a copy, and hand back a version that is ready to share." The sidebar is
+just the logo, the persona card (**Jordan Rivera, Faculty** — "Signed in"),
+and **Sign out** — no menus, no decisions.
 
-### Beat B — Upload your course material (0.5 min)
+Choose your file with the **Course material (PDF)** input and click
+**Transform my document →**. (If you have transformed documents before, a
+quiet **Recent** list sits under the card; the tiny footer reads "No file
+handy? **Try a sample document.**" and runs the same three steps on a
+bundled sample.)
 
-The primary card reads **Upload your course material**: "Choose a PDF from
-your computer (up to 50 MB). It stays on this machine, and the review starts
-right away." Pick a file with the **Course material (PDF)** input and click
-**Upload and review →**. (The bundled samples are still there, demoted to an
-"Or try a sample:" row.)
+### Step 2 — One processing screen does the improving (1 min)
 
-### Beat C — The sponsored moment (0.5 min)
+You are on **Step 2 of 3**. The status line moves with the real work —
+**"Reading your document…"**, then **"Verifying the new copy…"** — over
+three stage tiles: **Reading your document** ("A careful automatic review"),
+**Applying safe improvements** ("Only a copy is ever changed"), and
+**Verifying the new copy** ("A fresh review of the result"). The page notes
+"This page updates by itself every few seconds" — the teacher never clicks.
 
-While the review runs, the progress page ("Looking for useful accessibility
-signals…") shows a clearly labeled **Sponsored** card — Coastline College
-Foundation messages rotating by wall clock, ending with the line "Sponsor
-messages never delay your results."
+Behind the screen the pipeline assesses the file, and if the title or
+primary language is missing it applies that fix **on a copy** (title from
+the filename, language English (US)) with the same full provenance record
+as the manual Fix Lab path, then re-reviews the improved copy. Nothing else
+is ever changed automatically.
+
+Below the progress card sits the clearly labeled **Sponsored** card, ending
+with the line "Sponsor messages never delay your results."
 
 > **Say:** "The sponsor card is server-rendered, first-party, labeled, and
-> disappears the instant results are ready. It never gates anything."
+> gone the moment your document is ready. It never gates anything."
 
-Watch it vanish: the moment the assessment is terminal, results render and
-the card is gone.
+### Step 3 — Ready (1.5 min)
 
-### Beat D — Feedback at a glance (0.5 min)
+The page carries you forward by itself to **Step 3 of 3 — "Your document is
+ready."** One big button: **Download your document ↓**. Under it, the coral
+badge — **Reviewed & improved / Coastline College Accessibility Hub**, the
+date, a short evidence hash — and the line
+**"A review record, not a certification."**
 
-Above the lanes, the summary chip row totals the review, e.g.
-**"2 need attention · 3 to review · 0 verified · 4 not assessed"** — the
-same counts as the lane cards below, nothing more.
+Walk the insight cards, top to bottom:
 
-### Beat E — One-click improve (1 min)
+- **What we improved** — green cards naming exactly what was set, e.g.
+  **"Title added** — Screen readers now announce 'Week 5 Handout' instead of
+  a filename." and **"Language set to English (US)"**, with the note
+  "Improvements were applied to a copy. Your original file is untouched."
+  (This section only appears if something was actually fixed.)
+- **Worth a human look** — the review-recommended findings in plain
+  language, e.g. **Tags and reading order**, **Image descriptions**,
+  **Link purpose**.
+- **Verified in your document** — compact chips, e.g. **Document title**,
+  **Primary language**.
+- **Not checked by this tool** — one honest strip: "Visual contrast · Table
+  structure semantics · Form field labels · Color-only meaning. These are
+  judgment calls this tool leaves to a person." plus any checks that could
+  not run in this environment.
 
-On a first review with title/language gaps, the Fix Lab offers
-**Apply suggested fixes and recheck →** — "One click sets the title … and
-the language to English (US) in a new copy, then rechecks it." Click it. The
-recheck page settles on **Recheck complete** with the green
-**Your improved copy is ready** banner, and the chips flip — title and
-language now sit in *Verified signal*.
-
-### Beat F — Produce your document (1 min)
-
-The rechecked page now shows the **Produce your document** card with the
-circular badge — **Reviewed & improved / Coastline College Accessibility
-Hub**, the date, and a short evidence hash — and the line
-**"A review record, not a certification."** Click
-**Download the reviewed copy ↓**. The file downloads as
-`<name>.sealed.pdf`: the same document with exactly one added "Review
-summary" page carrying the seal wording, the review date, the evidence hash,
-where findings landed, and the fixes applied.
+Click **Download your document ↓**. The file arrives as `<name>.ready.pdf` —
+the improved copy with exactly one added "Review summary" page carrying the
+seal wording, the review date, the evidence hash, where findings landed, and
+the fixes applied.
 
 > **Say:** "This is a review record you can attach to the file — not a
 > badge, not a certification. Every other page is exactly what you uploaded,
-> plus your fixes — producing changes nothing but the added summary page."
+> plus the title and language set on a copy."
 
-Click **Sign out**. That is the whole teacher loop: sign in, upload, review,
-improve, verify, produce.
+Point at the closing row — **Transform another document →** loops back to
+the drop page; the quiet **Advanced tools** link opens the full classic
+document page (lanes, Fix Lab, structure, OCR) for power users. Click
+**Sign out**. That is the whole teacher loop: drop, wait, download.
 
 ## 3. Deep-dive act — the storyline (~10 minutes)
 
@@ -248,7 +264,7 @@ an empty list unless you remove each one.
 
 ### Beat 10 — Sign out (0.5 min)
 
-Click **Sign out** in the navy sidebar. You land back on the login page with
+Click **Sign out** in the sidebar. You land back on the login page with
 "You are signed out."
 
 > **Close:** "Review, understand, improve, verify — with evidence at
@@ -296,8 +312,8 @@ Run through this the night before *and* the morning of:
       `python3.11 scripts/staging_smoke.py --base-url http://127.0.0.1:8787
       --access-code "<printed code>"`
 - [ ] Have a real PDF ready for the opening act (any course handout under
-      50 MB); rehearse the upload once so the sponsored card and the sealed
-      download hold no surprises.
+      50 MB); rehearse the three steps once so the sponsored card and the
+      `.ready.pdf` download hold no surprises.
 - [ ] `tesseract --version` works on the demo machine (Beat 8); if not,
       decide now to narrate the OCR decline instead.
 - [ ] If you plan to click **Open local reviewer** on the landing page, start

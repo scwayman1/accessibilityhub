@@ -93,6 +93,15 @@ class StagingRepository:
             raise KeyError("document not found")
         return (self.documents_dir / item["storage_key"]).read_bytes()
 
+    def latest_child(self, tenant_id: str, document_id: str) -> dict[str, Any] | None:
+        """Newest direct derived copy of a document, if one exists."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM documents WHERE parent_document_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+                (document_id, tenant_id),
+            ).fetchone()
+        return dict(row) if row else None
+
     def list_documents(self, tenant_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
