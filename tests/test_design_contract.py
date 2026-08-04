@@ -45,12 +45,12 @@ class AccessibleDesignContractTests(unittest.TestCase):
             self.assertIn("prefers-reduced-motion", source)
 
     def test_public_step_label_meets_normal_text_contrast(self):
-        self.assertIn(".step-index { color:#435e66; font:14px", self.public)
-        self.assertGreaterEqual(contrast_ratio("#435e66", "#f2efe7"), 4.5)
+        self.assertIn(".step-index { color:#0e7c66; font:14px", self.public)
+        self.assertGreaterEqual(contrast_ratio("#0e7c66", "#ffffff"), 4.5)
 
     def test_functional_secondary_type_has_a_14_pixel_floor(self):
         self.assertIn(".brand small,.nav-links,.nav-cta,.button", self.public)
-        self.assertIn(".path-card .path-kind { margin:0 0 7px; color:var(--cyan); font:750 14px", self.public)
+        self.assertIn(".path-card .path-kind { margin:0 0 7px; color:var(--teal); font:750 14px", self.public)
         self.assertIn(".brand small,.back,.eyebrow", self.sample)
         self.assertIn(".steps li,.upload p,.btn", self.local)
         self.assertIn("#meta{font:14px var(--mono);color:var(--muted)}", self.local)

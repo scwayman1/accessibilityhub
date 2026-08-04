@@ -67,7 +67,7 @@ class GuidedSampleTests(unittest.TestCase):
         self.assertIn('tabindex="-1"', self.source)
 
     def test_lane_focus_ring_contrasts_with_its_light_surface(self):
-        self.assertIn(".lane:focus-visible { outline-color:#176878; }", self.source)
+        self.assertIn(".lane:focus-visible { outline-color:#cf3a24; }", self.source)
 
 
 if __name__ == "__main__":
