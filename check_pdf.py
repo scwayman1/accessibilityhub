@@ -438,17 +438,24 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                 "status": "machine_verified",
                 "evidence": f"All {len(links)} link annotation(s) carry an accessible description.",
             })
-        # Only ask for a contextual purpose review while links still lack names.
-        # Once every link carries a verified accessible description, the named
-        # links speak for themselves and this reminder would only second-guess
-        # the verified strength recorded above.
+        # Link purpose always needs a human read while links exist: an accessible
+        # description proves a name is present, not that the visible text
+        # describes the destination — a named link can still read as
+        # "click here". The evidence acknowledges verified names so the review
+        # prompt never contradicts the strength recorded above.
         if unnamed_links:
-            findings.append(finding(
-                "review_required", "PDF.LINKS.PURPOSE", "low", "link annotations",
-                f"Detected {len(links)} link annotation(s). Link purpose requires contextual review.",
-                "Review link text and destination purpose in context.",
-                pages=[link["page"] for link in links],
-            ))
+            purpose_evidence = f"Detected {len(links)} link annotation(s). Link purpose requires contextual review."
+        else:
+            purpose_evidence = (
+                f"All {len(links)} link annotation(s) carry accessible descriptions. "
+                "Link purpose still needs a human read — confirm each link's visible text describes its destination."
+            )
+        findings.append(finding(
+            "review_required", "PDF.LINKS.PURPOSE", "low", "link annotations",
+            purpose_evidence,
+            "Review link text and destination purpose in context.",
+            pages=[link["page"] for link in links],
+        ))
 
     qpdf_blocking = not tool_missing(qpdf) and qpdf["returncode"] != 0
     if not qpdf_blocking and not encrypted and reader is not None:

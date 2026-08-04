@@ -236,11 +236,15 @@ class PageAnchorTests(unittest.TestCase):
         self.assertIn("PDF.LINKS.PURPOSE", found)
         self.assertEqual(found["PDF.LINKS.PURPOSE"]["pages"], [2])
 
-    def test_link_purpose_review_silent_when_every_link_has_a_verified_name(self):
+    def test_link_purpose_review_acknowledges_verified_names_but_still_asks(self):
+        # A named annotation can still read as "click here" — purpose review
+        # stays a human task while any link exists, without contradicting the
+        # verified-name strength.
         report = run_analyze(named_link_pdf())
         found = rules(report)
-        self.assertNotIn("PDF.LINKS.PURPOSE", found)
         self.assertNotIn("PDF.LINKS.NAME", found)
+        self.assertIn("PDF.LINKS.PURPOSE", found)
+        self.assertIn("carry accessible descriptions", found["PDF.LINKS.PURPOSE"]["evidence"])
         strengths = {item["rule_id"] for item in report["strengths"]}
         self.assertIn("PDF.LINKS.NAME", strengths)
 

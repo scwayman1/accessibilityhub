@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import errno
+import ipaddress
 import json
 import subprocess
 import sys
@@ -615,12 +616,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
                         help=f"Port to listen on (default: {DEFAULT_PORT})")
     parser.add_argument("--host", default=DEFAULT_HOST,
-                        help=f"Address to bind (default: {DEFAULT_HOST}, loopback only)")
+                        help=f"Loopback address to bind (default: {DEFAULT_HOST}; "
+                             "non-loopback addresses are refused — the workbench is loopback-only)")
     return parser.parse_args(argv)
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if not _is_loopback_host(args.host):
+        print(
+            f"Refusing to bind {args.host!r}: the workbench promises documents stay on this "
+            "computer, so it only listens on loopback addresses (127.0.0.1, ::1, localhost).",
+            file=sys.stderr,
+        )
+        return 2
     journey = LearningJourney(Path.home() / ".coastline-studio" / "journey.json")
     try:
         server = create_server(args.port, run_spike_checker, journey=journey, host=args.host)

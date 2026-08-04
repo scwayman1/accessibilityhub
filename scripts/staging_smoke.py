@@ -158,8 +158,12 @@ class Smoke:
                     page = self.wait_for_terminal_assessment(ocr_path)
                     self.check("OCR recheck completes", REFRESH_MARKER not in page and bool(page))
                     self.check("OCR change history recorded", "ocr" in page)
+                elif status == 400 and any(marker in body for marker in ("OCR", "text layer", "recognition engine", "scanned pages")):
+                    # Only the service's own honest decline is an expected skip
+                    # (e.g. no OCR engine on the host). Anything else is a failure.
+                    self.skip("OCR text layer", "service declined the OCR repair — expected when the host has no OCR engine")
                 else:
-                    self.skip("OCR text layer", "service declined — expected when the host has no OCR engine")
+                    self.fail("OCR text layer applied", f"unexpected response {status} at {final_url}")
             else:
                 self.fail("scanned handout record created", f"landed on {final_url} ({status})")
         else:
@@ -173,12 +177,23 @@ class Smoke:
         self.check("workspace offers no file input", "type=file" not in page and 'type="file"' not in page)
 
         print("\n[7/7] Cleanup")
-        removed = 0
+        # Deleting a lineage root also removes its rechecked copies, so later
+        # paths in the list may already be gone (404) — that still counts as
+        # cleaned up. Anything else (auth expiry, 400, 500) fails the run.
+        removed, already_gone, failures = 0, 0, []
         for path in dict.fromkeys(self.created_documents):
-            status, _, _ = self.request(path + "/delete", data={"confirmed": "yes"})
-            if status == 200:
+            status, final_url, _ = self.request(path + "/delete", data={"confirmed": "yes"})
+            if status == 200 and self.document_path_from(final_url) == "/app":
                 removed += 1
-        self.ok(f"removed synthetic records ({removed} lineage roots processed)")
+            elif status == 404:
+                already_gone += 1
+            else:
+                failures.append(f"{path} → {status}")
+        self.check(
+            f"synthetic records removed ({removed} deleted, {already_gone} already removed with their lineage)",
+            not failures and removed > 0,
+            "; ".join(failures) or "nothing was deleted",
+        )
         return self.summarize()
 
     def summarize(self) -> int:

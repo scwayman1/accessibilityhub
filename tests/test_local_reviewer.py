@@ -12,6 +12,7 @@ from local_reviewer import (
     DEFAULT_PORT,
     MAX_PDF_BYTES,
     UploadValidationError,
+    _is_loopback_host,
     create_server,
     main,
     normalize_report_for_browser,
@@ -72,6 +73,21 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 0)
         self.assertIn("--port", stdout.getvalue())
         self.assertIn("Accessibility Hub", stdout.getvalue())
+
+    def test_non_loopback_host_is_refused_before_binding(self):
+        # The workbench promises documents stay on this computer; a LAN bind
+        # would silently break that boundary.
+        for host in ("0.0.0.0", "192.168.1.20", "example.com", "::"):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = main(["--host", host, "--port", "0"])
+            self.assertEqual(exit_code, 2, host)
+            self.assertIn("loopback", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_loopback_host_spellings_are_accepted(self):
+        for host in ("127.0.0.1", "127.0.0.2", "localhost", "::1"):
+            self.assertTrue(_is_loopback_host(host), host)
 
     def test_busy_port_yields_a_friendly_one_line_error_not_a_traceback(self):
         blocker = socket.socket()
