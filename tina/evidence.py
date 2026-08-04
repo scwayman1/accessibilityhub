@@ -15,9 +15,9 @@ from typing import Any
 CONTRACT_VERSION = "tina-evidence-receipt/v1"
 
 DISCLAIMER = (
-    "This receipt records the review actions completed with Accessibility "
-    "Studio. It is not a certification that the document is fully accessible "
-    "or legally compliant."
+    "This receipt records the review actions completed with the Coastline "
+    "College Accessibility Hub. It is not a certification that the document "
+    "is fully accessible or legally compliant."
 )
 
 # PRD §6.1 prohibited outcome language. Kept here (this module is exempt from the

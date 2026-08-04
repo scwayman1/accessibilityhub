@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import io
 import json
@@ -74,6 +75,47 @@ class JourneyEndpointTests(unittest.TestCase):
         body = json.dumps({"rule_id": "PDF.IMAGES.ALTERNATIVES", "decision": "Reviewed; two decorative."}).encode()
         journey = self.post("/api/attest", body, content_type="application/json")
         self.assertEqual(journey["skills"]["images_and_meaning"]["state"], "applied")
+
+    def test_fixed_copy_rereview_does_not_scold_with_repeat_defects(self):
+        # Regression: every fix produced a copy with a new hash, and re-reviewing
+        # that copy counted as the defect appearing in a NEW document, so fixing
+        # one document progressively triggered red repeat-defect warnings.
+        def links_checker(pdf_path: Path, output_dir: Path) -> dict:
+            payload = pdf_path.read_bytes()
+            reader = PdfReader(io.BytesIO(payload))
+            findings = [{"rule_id": "PDF.LINKS.PURPOSE", "category": "review_required", "severity": "medium"}]
+            if not (reader.metadata or {}).get("/Title"):
+                findings.append({"rule_id": "PDF.METADATA.TITLE", "category": "deterministic_defect", "severity": "medium"})
+            return {
+                "schema_version": "0.1",
+                "input": {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)},
+                "tools": {"pypdf": "6.9.1"},
+                "findings": findings,
+                "strengths": [],
+            }
+
+        server = create_server(0, links_checker, journey=LearningJourney())
+        Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            def post(path: str, payload: bytes):
+                request = Request(base + path, data=payload,
+                                  headers={"Content-Type": "application/pdf"}, method="POST")
+                with urlopen(request, timeout=10) as response:
+                    return json.loads(response.read())
+
+            result = post("/api/fix?filename=a.pdf&title=Week%203", minimal_pdf())
+            fixed_pdf = base64.b64decode(result["fixed_pdf_base64"])
+            self.assertNotEqual(result["before"]["input"]["sha256"], result["after"]["input"]["sha256"])
+            post(f"/api/review?filename={result['fixed_filename']}", fixed_pdf)
+
+            with urlopen(base + "/api/journey", timeout=10) as response:
+                journey = json.loads(response.read())
+            self.assertEqual(journey["repeat_defects"], [])
+            self.assertEqual(journey["documents_reviewed"], 1)
+        finally:
+            server.shutdown()
+            server.server_close()
 
     def test_receipt_endpoint_builds_verifiable_receipt(self):
         review = self.post("/api/review?filename=a.pdf", minimal_pdf())

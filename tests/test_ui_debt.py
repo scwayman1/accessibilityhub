@@ -186,6 +186,94 @@ class NewDocumentResetTests(unittest.TestCase):
         self.assertIn("setWorkflowStep(1)", self.reset_body)
 
 
+class ReviewAnotherDocumentTests(unittest.TestCase):
+    """Finishing one review must not be a dead end: a visible control starts over."""
+
+    def setUp(self):
+        self.source = Path("local_reviewer.html").read_text()
+
+    def test_results_view_offers_a_review_another_document_action(self):
+        self.assertIn('id="reviewAnother"', self.source)
+        self.assertIn(">Review another document<", self.source)
+
+    def test_the_action_resets_state_and_restores_the_upload_view(self):
+        handler = self.source.split("document.getElementById('reviewAnother').addEventListener", 1)[1].split("\n", 1)[0]
+        self.assertIn("resetDocumentState()", handler)
+        self.assertIn("input.value=''", handler)
+        self.assertIn("workingFile=null", handler)
+        self.assertIn("chosen.classList.remove('show')", handler)
+
+    def test_stale_review_and_fix_responses_cannot_undo_a_reset(self):
+        # Regression: a fix/review still in flight when the user clicked
+        # 'Review another document' re-rendered the OLD document's results over
+        # the fresh upload view. Responses from a previous document generation
+        # must be dropped.
+        self.assertIn("docGeneration=0", self.source)
+        self.assertIn("function resetDocumentState(){docGeneration++;", self.source)
+        self.assertEqual(self.source.count("const generation=docGeneration"), 3)
+        self.assertIn("if(generation===docGeneration)render(body)", self.source)
+        self.assertEqual(self.source.count("if(generation===docGeneration)applyFixResult(body)"), 2)
+
+
+class DiffBannerMathTests(unittest.TestCase):
+    """Before/after counts use the same document-findings-only basis as the headline."""
+
+    def setUp(self):
+        self.source = Path("local_reviewer.html").read_text()
+
+    def test_diff_counts_exclude_tool_limitations(self):
+        self.assertIn("const docCount=r=>((r||{}).findings||[]).filter(f=>f.category!=='tool_failure_or_unsupported').length", self.source)
+        self.assertIn("' in this document before, '", self.source)
+        self.assertNotIn("(result.before.findings||[]).length+' items before", self.source)
+
+
+class SmallPolishTests(unittest.TestCase):
+    def setUp(self):
+        self.source = Path("local_reviewer.html").read_text()
+
+    def test_single_page_documents_read_one_page_not_one_pages(self):
+        self.assertIn("' page'+(report.metadata.page_count===1?'':'s')", self.source)
+
+    def test_completeness_summary_has_no_double_disclosure_marker(self):
+        # The native details triangle is the only marker; the en-dash prefix
+        # that produced a garbled double marker is gone.
+        self.assertNotIn('summary:before{content:"– "}', self.source)
+
+    def test_ocr_low_confidence_legend_only_renders_when_highlights_exist(self):
+        self.assertIn("let hasLowConf=false", self.source)
+        self.assertIn("if(hasLowConf)html+=", self.source)
+
+    def test_non_pdf_files_are_rejected_client_side_with_a_friendly_message(self):
+        self.assertIn("selectedFile.type!=='application/pdf'", self.source)
+        self.assertIn("is not a PDF", self.source)
+
+    def test_page_declares_the_shared_favicon(self):
+        self.assertIn('<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">', self.source)
+
+
+class ProductNameTests(unittest.TestCase):
+    """The retired 'Accessibility Studio' name never appears in workbench-owned surfaces."""
+
+    RETIRED = "Accessibility Studio"
+    OWNED = (
+        "local_reviewer.html",
+        "local_reviewer.py",
+        "tina/evidence.py",
+        "tina/intelligence.py",
+        "tina/learning.py",
+    )
+
+    def test_owned_surfaces_use_the_hub_name_only(self):
+        for surface in self.OWNED:
+            self.assertNotIn(self.RETIRED, Path(surface).read_text(),
+                             f"Retired product name found in {surface}")
+
+    def test_workbench_header_and_title_carry_the_hub_name(self):
+        source = Path("local_reviewer.html").read_text()
+        self.assertIn("<title>Accessibility Hub — Local Reviewer</title>", source)
+        self.assertIn("<span>Accessibility Hub</span>", source)
+
+
 class OutcomeLanguageTests(unittest.TestCase):
     """The workbench must never present a conformance or certification outcome."""
 

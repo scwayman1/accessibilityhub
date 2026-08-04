@@ -140,15 +140,42 @@ class LearningJourney:
         self.events.append(event)
         self._save()
 
+    def _canonical(self, document: str | None) -> str | None:
+        """Resolve a document id through recorded fix lineage to its original.
+
+        A fixed copy produced by this workbench is the same document with a new
+        hash; treating it as its original keeps repeat-defect and sustained-skill
+        math honest across chained fixes."""
+        if document is None:
+            return None
+        parents = {
+            event["child"]: event["parent"]
+            for event in self.events
+            if event["type"] == "lineage" and event.get("child") and event.get("parent")
+        }
+        seen = set()
+        while document in parents and document not in seen:
+            seen.add(document)
+            document = parents[document]
+        return document
+
+    def record_lineage(self, parent_sha256: str | None, child_sha256: str | None) -> None:
+        """Link a fixed copy's fingerprint to its source document's fingerprint."""
+        parent = self._canonical(_doc_id(parent_sha256))
+        child = _doc_id(child_sha256)
+        if parent is None or child is None or parent == child:
+            return
+        self._record({"type": "lineage", "parent": parent, "child": child})
+
     def record_review(self, document_sha256: str | None, finding_rule_ids: list[str]) -> None:
-        document = _doc_id(document_sha256)
+        document = self._canonical(_doc_id(document_sha256))
         if document is None:
             return
         skills = sorted({RULE_TO_SKILL[rule] for rule in finding_rule_ids if rule in RULE_TO_SKILL})
         self._record({"type": "review", "document": document, "skills_with_findings": skills})
 
     def record_fix(self, document_sha256: str | None, resolved_rule_ids: list[str]) -> None:
-        document = _doc_id(document_sha256)
+        document = self._canonical(_doc_id(document_sha256))
         skills = sorted({RULE_TO_SKILL[rule] for rule in resolved_rule_ids if rule in RULE_TO_SKILL})
         if document is None or not skills:
             return

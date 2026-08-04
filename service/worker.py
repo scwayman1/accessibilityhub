@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -16,48 +15,134 @@ from service.repository import StagingRepository
 LANES = {
     "deterministic_defect": "needs_attention",
     "review_required": "review_recommended",
-    "tool_failure_or_unsupported": "not_assessed",
-    "blocking_technical_failure": "not_assessed",
-    "advisory": "not_assessed",
+    # A document that cannot be read at all is a problem the educator must act
+    # on, not a shrug: it belongs in "Needs attention", never in gray.
+    "blocking_technical_failure": "needs_attention",
+    "advisory": "review_recommended",
 }
 
-UNASSESSED_SIGNALS = (
-    ("PDF.VISUAL.CONTRAST", "Contrast", "Not assessed", "Visual contrast needs source or rendered-page review."),
-    ("PDF.TABLES.MEANING", "Tables", "Not assessed", "Table headers, scope, and reading order need contextual review."),
-    ("PDF.FORMS.LABELS", "Forms", "Not assessed", "Form labels and instructions are not assessed in this staging slice."),
-)
+LANE_ORDER = ("needs_attention", "review_recommended", "verified_signal", "not_assessed")
+
+# Educator-ready titles authored in rule_knowledge.json, loaded once.
+_KNOWLEDGE_PATH = Path(__file__).resolve().parents[1] / "rule_knowledge.json"
+try:
+    _RULE_TITLES: dict[str, str] = {
+        rule_id: entry["title"]
+        for rule_id, entry in json.loads(_KNOWLEDGE_PATH.read_text(encoding="utf-8")).get("rules", {}).items()
+        if isinstance(entry, dict) and entry.get("title")
+    }
+except (OSError, json.JSONDecodeError):
+    _RULE_TITLES = {}
+
+# A verified strength should never be named after the defect it disproves.
+_STRENGTH_TITLES = {
+    "PDF.IMAGES.ALT_MISSING": "Figure descriptions in place",
+    "PDF.LINKS.NAME": "Links are named",
+    "PDF.INTAKE.QPDF_CHECK": "Structural integrity",
+}
+
+# Plain-language copy for documents the reviewer could not read at all.
+_BLOCKED_COPY = {
+    "PDF.INTAKE.ENCRYPTED": (
+        "This document is password-protected, so it could not be reviewed.",
+        "Ask the document owner for an unencrypted copy, then review that copy.",
+    ),
+    "PDF.INTAKE.QPDF_CHECK": (
+        "This document appears to be damaged, so it could not be reviewed reliably.",
+        "Export a fresh PDF from the original source document, then review again.",
+    ),
+    "PDF.PARSE.PYPDF": (
+        "This document could not be opened for review.",
+        "Export a fresh PDF from the original source document, then review again.",
+    ),
+}
+
+# Tool-availability items never lead the review: they collapse into a quiet
+# "Review completeness" note in plain language, at the end of the page.
+_COMPLETENESS_COPY = {
+    "PDF.INTAKE.QPDF_UNAVAILABLE": "The structural integrity checker isn't available in this environment, so that check was not run.",
+    "PDF.VERAPDF.UNAVAILABLE": "The full-standard validator isn't available in this environment, so those checks were not run.",
+}
+
+
+def _humanize(rule_id: str) -> str:
+    """Fallback title: never a raw dotted rule id, never a mangled non-word."""
+    cleaned = rule_id.removeprefix("PDF.").replace(".", " ").replace("_", " ")
+    return cleaned.strip().title() or "Finding"
+
+
+def title_for(rule_id: str | None) -> str:
+    rule_id = rule_id or ""
+    return _RULE_TITLES.get(rule_id) or _humanize(rule_id)
+
+
+def _strength_title(rule_id: str | None) -> str:
+    rule_id = rule_id or ""
+    return _STRENGTH_TITLES.get(rule_id) or title_for(rule_id)
+
+
+def _is_toolchain_area(area: str) -> bool:
+    lowered = area.lower()
+    return "qpdf" in lowered or "verapdf" in lowered
 
 
 def normalize_report(report: dict[str, Any]) -> dict[str, Any]:
     """Map checker evidence into discrete product lanes without creating a score."""
     signals: list[dict[str, Any]] = []
+    completeness: list[str] = []
     for item in report.get("findings", []):
+        category = item.get("category")
+        rule_id = item.get("rule_id")
+        if category == "tool_failure_or_unsupported":
+            completeness.append(
+                _COMPLETENESS_COPY.get(rule_id or "")
+                or f"{title_for(rule_id)}: this check could not run in this environment, so it was not included."
+            )
+            continue
+        evidence, next_action = item.get("evidence"), item.get("next_action")
+        if category == "blocking_technical_failure" and rule_id in _BLOCKED_COPY:
+            evidence, next_action = _BLOCKED_COPY[rule_id]
         signals.append({
-            "lane": LANES.get(item.get("category"), "not_assessed"),
-            "rule_id": item.get("rule_id"),
-            "title": item.get("rule_id", "Finding").replace("PDF.", "").replace("_", " ").title(),
-            "evidence": item.get("evidence"),
-            "next_action": item.get("next_action"),
-            "educator_context": item.get("category") in {"review_required", "advisory"},
+            "lane": LANES.get(category, "not_assessed"),
+            "rule_id": rule_id,
+            "title": title_for(rule_id),
+            "evidence": evidence,
+            "next_action": next_action,
+            "educator_context": category in {"review_required", "advisory"},
             "location": item.get("location"),
         })
     for item in report.get("strengths", []):
         signals.append({
             "lane": "verified_signal", "rule_id": item.get("rule_id"),
-            "title": item.get("rule_id", "Signal").replace("PDF.", "").replace("_", " ").title(),
+            "title": _strength_title(item.get("rule_id")),
             "evidence": item.get("evidence"), "next_action": "Keep this document detail in place.",
             "educator_context": False, "location": "machine evidence",
         })
-    for rule_id, title, lane_label, evidence in UNASSESSED_SIGNALS:
+    # The report's own honesty list, in full — including color-only meaning.
+    # Toolchain entries are already covered by the completeness notes above.
+    for item in report.get("not_assessed", []):
+        area = str(item.get("area") or "").strip()
+        if not area:
+            continue
+        if _is_toolchain_area(area):
+            continue
         signals.append({
-            "lane": "not_assessed", "rule_id": rule_id, "title": title,
-            "evidence": evidence, "next_action": "Review this detail in the source material.",
-            "educator_context": True, "location": lane_label,
+            "lane": "not_assessed", "rule_id": None,
+            "title": area[:1].upper() + area[1:],
+            "evidence": item.get("reason"),
+            "next_action": "Review this detail in the source material.",
+            "educator_context": True, "location": "human review",
         })
+    signals.sort(key=lambda signal: LANE_ORDER.index(signal["lane"]) if signal["lane"] in LANE_ORDER else len(LANE_ORDER))
     report_copy = json.loads(json.dumps(report))
     report_copy.get("input", {}).pop("path", None)
     report_copy.get("verapdf", {}).pop("report_path", None)
-    return {"report": report_copy, "signals": signals, "claim": "Signals are shown separately. They are not an overall accessibility result."}
+    return {
+        "report": report_copy,
+        "signals": signals,
+        "completeness": completeness,
+        "claim": "Signals are shown separately. They are not an overall accessibility result.",
+    }
 
 
 class AssessmentWorker:
