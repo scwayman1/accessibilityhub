@@ -390,7 +390,11 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     resolved_count = sum(1 for item in result.get("signals", []) if item.get("lane") == "verified_signal" and before.get(item.get("rule_id")) not in {None, "verified_signal"})
                 completion = ""
                 if is_recheck and job_state == "succeeded":
-                    completion = f'''<div class=completion role=status><span class=completion-mark aria-hidden=true>✓</span><div><h2>Your improved copy is ready</h2><p>{resolved_count or 'The'} accessibility signal{'s are' if resolved_count != 1 else ' is'} now verified in the recheck. The original sample remains unchanged.</p></div></div>'''
+                    if resolved_count:
+                        completion_line = f"{resolved_count} accessibility signal{'s are' if resolved_count != 1 else ' is'} now verified in the recheck. The original sample remains unchanged."
+                    else:
+                        completion_line = "Compare the lanes with the previous version to see what changed. The original sample remains unchanged."
+                    completion = f'''<div class=completion role=status><span class=completion-mark aria-hidden=true>✓</span><div><h2>Your improved copy is ready</h2><p>{completion_line}</p></div></div>'''
                 header_title = "Recheck complete" if is_recheck else "Review findings"
                 header_lead = "See what changed, then explore the remaining signals." if is_recheck else "Read each signal, decide what to improve, and verify the new version without losing the record of what changed."
                 state_label = STATE_LABELS.get(job_state, "Review queued")

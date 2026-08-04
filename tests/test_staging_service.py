@@ -345,6 +345,12 @@ class StagingServiceTests(unittest.TestCase):
         # action is no longer offered on the rechecked copy.
         _, _, child_page = self.request(f"/documents/{child_id}")
         self.assertNotIn(b"Add a text layer from this scan", child_page)
+        # A recheck that resolves signals without minting new verified strengths
+        # must not claim "The accessibility signals are now verified" — the
+        # banner falls back to an honest compare-the-lanes line.
+        self.assertIn(b"Your improved copy is ready", child_page)
+        self.assertNotIn(b"The accessibility signal", child_page)
+        self.assertIn(b"Compare the lanes with the previous version", child_page)
 
 
     def _optin_app(self):

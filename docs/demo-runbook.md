@@ -46,7 +46,9 @@ Open `http://127.0.0.1:8000/`.
 > verify. It shows evidence, not grades."
 
 Point at the four-step model on the page (Review → Understand → Improve →
-Verify), then click **Try a guided sample** → **Start guided sample**.
+Verify), then find the **Try a guided sample** card and click its
+**Start guided sample** button (the card heading itself is not a link; a
+second Start guided sample button near the bottom of the page works too).
 
 ### Beat 2 — Guided sample (1.5 min)
 
@@ -82,12 +84,14 @@ When signals appear, walk the lanes top to bottom:
 
 > **Say:** "The review found the handout has no document title and no primary
 > language — those are *Needs attention*: concrete, machine-verifiable
-> barriers. Below them, *Review recommended* items need a human eye. And
+> barriers. Below them, the *Review recommended* item needs a human eye. And
 > notice *Not assessed*: contrast, tables, forms, color-only meaning. The tool
 > gathers no evidence about those, so it says so instead of staying quiet.
 > That honesty is the product."
 
-If a **Review completeness** strip appears at the bottom, open it:
+Open the **Review completeness** strip at the bottom (expect it on a demo
+laptop — the deeper structure and full-standard validators are usually not
+installed, and the review discloses exactly that):
 
 > **Say:** "Checks that couldn't run in this environment are disclosed here —
 > the review never presents a partial check as a full one."
@@ -136,7 +140,13 @@ confirmation checkbox, and click **Apply text layer and recheck**.
 > **Say:** "The recognized text is machine-generated, so the product requires
 > a human to confirm they will review it against the page images — the
 > checkbox is a real commitment, not decoration. On recheck, the extractable
-> text signal is resolved; the scan image itself is untouched."
+> text card is gone from the lanes — resolved — and the scan image itself is
+> untouched."
+
+The green banner on this recheck reads "Compare the lanes with the previous
+version to see what changed" — point at the lanes (the Extractable text card
+has disappeared), not at a verified count; unlike Beat 6, this repair resolves
+a signal without minting a new verified one.
 
 (This beat needs tesseract installed on the demo machine — verify it in the
 pre-demo checklist. If it is unavailable, say the OCR path is disclosed as
@@ -149,6 +159,10 @@ confirmation, and click **Remove records**.
 
 > **Say:** "Synthetic records are disposable, and removal is explicit and
 > audited."
+
+Removal covers the version you are on and its rechecked copies; other
+lineages you created earlier stay listed in the workspace, so don't promise
+an empty list unless you remove each one.
 
 ### Beat 10 — Sign out (0.5 min)
 
@@ -201,6 +215,10 @@ Run through this the night before *and* the morning of:
       --access-code "<printed code>"`
 - [ ] `tesseract --version` works on the demo machine (Beat 8); if not,
       decide now to narrate the OCR decline instead.
+- [ ] If you plan to click **Open local reviewer** on the landing page, start
+      the workbench on its default port first: `python3.11 local_reviewer.py`
+      (the landing link points at `http://127.0.0.1:8765/` — a custom `--port`
+      makes that link a dead end on stage).
 - [ ] Hard-refresh both browser tabs (Ctrl/Cmd+Shift+R) so no stale page or
       cached CSS appears.
 - [ ] Set browser zoom for the room (110–125% projects well) and check the

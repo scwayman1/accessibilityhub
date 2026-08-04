@@ -316,7 +316,7 @@ def create_server(
 
         def read_json_body(self, length: int) -> dict[str, Any] | None:
             if length <= 0 or length > MAX_JSON_BYTES:
-                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body must be JSON under 10 MB."})
+                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body must be JSON under 80 MB."})
                 return None
             try:
                 body = json.loads(self.rfile.read(length))
