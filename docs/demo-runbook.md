@@ -63,20 +63,32 @@ to a copy, and hand back a version that is ready to share." The sidebar is
 just the logo, the persona card (**Jordan Rivera, Faculty** — "Signed in"),
 and **Sign out** — no menus, no decisions.
 
-Choose your file with the **Course material (PDF)** input and click
-**Transform my document →**. (If you have transformed documents before, a
-quiet **Recent** list sits under the card; the tiny footer reads "No file
-handy? **Try a sample document.**" and runs the same three steps on a
-bundled sample.)
+The **Course material (PDF)** input now sits inside a dashed drop zone with
+a coral document glyph and the hint "Drag your PDF here, or choose a file
+above." Drag a file over it and the zone lights up coral — drop it, or pick
+it with the input, and the hint flips to **"Ready to transform:
+&lt;your file&gt;.pdf"** on a green zone. Then click **Transform my
+document →**. (If you have transformed documents before, a quiet **Recent**
+list sits under the card; the tiny footer reads "No file handy? **Try a
+sample document.**" and runs the same three steps on a bundled sample.)
 
 ### Step 2 — One processing screen does the improving (1 min)
 
-You are on **Step 2 of 3**. The status line moves with the real work —
-**"Reading your document…"**, then **"Verifying the new copy…"** — over
-three stage tiles: **Reading your document** ("A careful automatic review"),
-**Applying safe improvements** ("Only a copy is ever changed"), and
-**Verifying the new copy** ("A fresh review of the result"). The page notes
-"This page updates by itself every few seconds" — the teacher never clicks.
+You are on **Step 2 of 3**, and the document takes its journey. Above the
+status, a little night-sky scene: your document — a coral tile with a page
+icon — flies a dashed track between three stops (page icon → spark icon →
+check mark) while stars twinkle and the odd comet streaks past. The
+headline moves with the real work — **"Reading your document…"**,
+**"Applying safe improvements…"**, **"Verifying the new copy…"** — and as
+each stage completes, its tile flips green and a small burst of sparks
+trails off the traveling document: **Reading your document** ("A careful
+automatic review"), **Applying safe improvements** ("Only a copy is ever
+changed"), **Verifying the new copy** ("A fresh review of the result"). The
+page notes "This page updates by itself every few seconds" — the teacher
+never clicks. (One first-party script, `/assets/journey.js`, drives the
+polling and the scene; with JavaScript off the page falls back to its plain
+5-second refresh and the same stage tiles, and under reduced-motion
+settings the whole scene stands perfectly still.)
 
 Behind the screen the pipeline assesses the file, and if the title or
 primary language is missing it applies that fix **on a copy** (title from
@@ -84,8 +96,10 @@ the filename, language English (US)) with the same full provenance record
 as the manual Fix Lab path, then re-reviews the improved copy. Nothing else
 is ever changed automatically.
 
-Below the progress card sits the clearly labeled **Sponsored** card, ending
-with the line "Sponsor messages never delay your results."
+Below the progress card, the clearly labeled **Sponsored** card glides in
+from the right — brought to you by our sponsors, ending with the line
+"Sponsor messages never delay your results." It is server-rendered and
+first-party, and it is gone the moment the document is ready.
 
 > **Say:** "The sponsor card is server-rendered, first-party, labeled, and
 > gone the moment your document is ready. It never gates anything."
@@ -93,10 +107,13 @@ with the line "Sponsor messages never delay your results."
 ### Step 3 — Ready (1.5 min)
 
 The page carries you forward by itself to **Step 3 of 3 — "Your document is
-ready."** One big button: **Download your document ↓**. Under it, the coral
-badge — **Reviewed & improved / Coastline College Accessibility Hub**, the
-date, a short evidence hash — and the line
-**"A review record, not a certification."**
+ready."** The arrival celebrates once: a brief confetti fall in the brand
+colors, the coral seal badge pops into place, and a corner of small stars
+keeps twinkling — then everything settles to calm. (Under reduced motion
+there is no burst and no pop; the page simply arrives.) One big button:
+**Download your document ↓**. Under it, the coral badge — **Reviewed &
+improved / Coastline College Accessibility Hub**, the date, a short
+evidence hash — and the line **"A review record, not a certification."**
 
 Walk the insight cards, top to bottom:
 
