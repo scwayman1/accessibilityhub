@@ -52,6 +52,28 @@ _FALLBACK_FAVICON = (
     b'<path d="M17 34 L28 45 L47 21" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 )
 
+# One same-origin script powers the educator journey (drag-over state, the
+# animated transformation, the arrival celebration). CSP allows same-origin
+# scripts only, so this is the single script reference any educator page makes.
+_JOURNEY_SCRIPT = '<script src="/assets/journey.js" defer></script>'
+
+# Inline SVG sprite for the journey iconography. Decorative everywhere it is
+# used (aria-hidden), referenced with <use href="#i-...">.
+_JOURNEY_SPRITE = (
+    '<svg class=sprite aria-hidden=true focusable=false xmlns="http://www.w3.org/2000/svg">'
+    '<symbol id=i-doc viewBox="0 0 24 24">'
+    '<path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>'
+    '<path d="M13.5 2.5V8H19" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>'
+    '<path d="M8.5 13h7M8.5 17h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>'
+    '<symbol id=i-star viewBox="0 0 24 24">'
+    '<path d="M12 2.6l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2-5.6-3.2-5.6 3.2 1.3-6.2L3 9.1l6.3-.7Z" fill="currentColor"/></symbol>'
+    '<symbol id=i-spark viewBox="0 0 24 24">'
+    '<path d="M12 2v5M12 17v5M2 12h5M17 12h5M5 5l3.2 3.2M15.8 15.8 19 19M19 5l-3.2 3.2M8.2 15.8 5 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>'
+    '<symbol id=i-check viewBox="0 0 24 24">'
+    '<path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>'
+    '</svg>'
+)
+
 
 def _when(iso: str) -> str:
     try:
@@ -103,12 +125,13 @@ def _load_partner_ads() -> dict[str, Any] | None:
         return None
 
 
-def _sponsored_card() -> str:
+def _sponsored_card(fly: bool = False) -> str:
     """Server-rendered, first-party Sponsored card shown only while a job runs.
 
     Rotation is a pure time bucket — no scripts, no pixels, no tracking — and
     the card never gates anything: the moment a job is terminal the results
-    page renders without it.
+    page renders without it. The educator journey adds a CSS-only fly-in
+    (``fly=True``), stilled entirely under prefers-reduced-motion.
     """
     ads = _load_partner_ads()
     if not ads:
@@ -117,7 +140,7 @@ def _sponsored_card() -> str:
     tagline = f"<p class=sponsor-tagline>{escape(str(partner.get('tagline') or ''))}</p>" if partner.get("tagline") else ""
     cta = f"<span class=sponsor-cta>{escape(str(partner.get('cta_label') or ''))}</span>" if partner.get("cta_label") else ""
     return (
-        '<aside class="panel sponsor-card" aria-label="Sponsored message">'
+        f'<aside class="panel sponsor-card{" sponsor-fly" if fly else ""}" aria-label="Sponsored message">'
         f'<div class=sponsor-top><span class=sponsor-label>Sponsored</span><span class=sponsor-disclosure>{escape(ads["disclosure"])}</span></div>'
         f'<h3>{escape(str(partner["name"]))}</h3>{tagline}<p class=sponsor-message>{escape(str(partner["message"]))}</p>{cta}'
         '<div class=sponsor-progress aria-hidden=true></div>'
@@ -221,14 +244,18 @@ def _app_shell(current: str, content: str, signed_in: bool = False, dev: bool = 
 
 def _educator_shell(content: str, persona: str) -> str:
     """The simplified shell for the three-step educator flow: logo, persona,
-    sign out. No rail, no environment notes — nothing but the path forward."""
+    sign out. No rail, no environment notes — nothing but the path forward.
+
+    Carries the journey icon sprite and the single same-origin script that
+    progressively enhances the flow; with scripting absent every page still
+    works on plain forms and the <noscript> refresh."""
     persona_block = f'<div class=persona><span class=persona-mark aria-hidden=true>{escape(persona[:1])}</span><div><strong>{escape(persona)}</strong><p>Signed in</p></div></div>' if persona else ""
-    return f'''<a class=skip-link href="#main-content">Skip to main content</a><div class=app-shell>
+    return f'''<a class=skip-link href="#main-content">Skip to main content</a>{_JOURNEY_SPRITE}<div class=app-shell>
     <aside class=sidebar><a class=brand href="/app"><img src="/assets/coastline-college-logo-white.png" alt="Coastline College"></a>
     <div class=product-lockup><span>Coastline College</span><strong>Accessibility Hub</strong></div>
     {persona_block}
     <form class=signout method=post action="/logout"><button>Sign out</button></form></aside>
-    <main id=main-content class=main-workspace tabindex="-1">{content}</main></div>'''
+    <main id=main-content class=main-workspace tabindex="-1">{content}</main></div>{_JOURNEY_SCRIPT}'''
 
 
 def _html_page(title: str, body: str, head: str = "") -> bytes:
@@ -268,6 +295,39 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .persona { display:flex; gap:10px; align-items:center; margin:18px 8px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } .persona-mark { flex:0 0 auto; display:grid; place-items:center; width:30px; height:30px; color:white; border-radius:50%; background:var(--brand-deep); font-weight:850 } .persona>div { min-width:0 } .persona strong { display:block; color:var(--ink); font-size:14px } .persona p { color:var(--muted); font-size:14px }
     .sponsor-card { max-width:760px; margin:18px auto 0; background:var(--wash) } .sponsor-top { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px } .sponsor-label { display:inline-flex; align-items:center; padding:4px 12px; color:white; border-radius:999px; background:var(--ink); font-size:14px; font-weight:850; letter-spacing:.08em; text-transform:uppercase } .sponsor-disclosure { color:var(--muted); font-size:14px } .sponsor-tagline { margin-top:4px; color:var(--brand-press); font-size:14px; font-weight:800 } .sponsor-message { margin-top:8px; color:var(--ink-soft) } .sponsor-cta { display:inline-flex; align-items:center; margin-top:12px; padding:7px 14px; color:var(--brand-press); border:1px solid var(--blush-line); border-radius:999px; background:var(--blush); font-size:14px; font-weight:800 } .sponsor-note { margin-top:12px; color:var(--muted); font-size:14px }
     .sponsor-progress { position:relative; height:4px; margin-top:14px; border-radius:999px; background:var(--blush); overflow:hidden } .sponsor-progress:after { content:""; position:absolute; top:0; bottom:0; left:0; width:34%; border-radius:999px; background:var(--brand); animation:sweep 2.4s ease-in-out infinite alternate } @keyframes sweep { from { transform:translateX(-20%) } to { transform:translateX(220%) } }
+    /* Educator journey: drop zone, transformation scene, arrival celebration. Every looping animation lives behind prefers-reduced-motion:no-preference; without motion the scene is a static picture of the current stage. */
+    .sprite { position:absolute; width:0; height:0; overflow:hidden }
+    .dropzone { position:relative; margin-top:26px; padding:28px 20px 22px; border:2px dashed var(--line-strong); border-radius:16px; background:var(--wash); text-align:center; transition:border-color .18s ease,background .18s ease,transform .18s ease }
+    .dropzone.is-dragover { border-color:var(--brand); background:var(--blush); transform:scale(1.01) }
+    .dropzone.has-file { border-color:var(--success-line); background:var(--success-soft) }
+    .drop-glyph { display:block; width:44px; height:44px; margin:0 auto 4px; color:var(--brand) }
+    .drop-hero .dropzone #upload-file { margin-top:10px; padding:12px; border-width:2px; border-radius:12px }
+    .drop-hint { margin-top:12px; color:var(--muted); font-size:14px } .dropzone.has-file .drop-hint { color:var(--success); font-weight:700 }
+    .journey-card { position:relative; overflow:hidden }
+    .journey-scene { position:relative; height:150px; max-width:560px; margin:0 auto 18px }
+    .journey-star { position:absolute; width:14px; height:14px; color:var(--sun) } .journey-star.s1 { top:8%; left:16% } .journey-star.s2 { top:2%; left:56%; width:10px; height:10px } .journey-star.s3 { top:22%; left:82% } .journey-star.s4 { top:38%; left:38%; width:9px; height:9px }
+    .journey-comet { position:absolute; top:14%; left:-64px; width:48px; height:3px; border-radius:999px; background:linear-gradient(90deg,rgba(240,86,63,0),var(--brand)); opacity:0 }
+    .journey-track { position:absolute; left:4%; right:4%; bottom:14px; display:flex; align-items:center; gap:10px }
+    .journey-line { flex:1; border-top:2px dashed var(--blush-line) }
+    .journey-node { flex:0 0 auto; display:grid; place-items:center; width:42px; height:42px; color:var(--neutral); border:2px solid var(--line-strong); border-radius:50%; background:var(--wash) } .journey-node svg { width:20px; height:20px }
+    [data-stage=reading] .n-reading,[data-stage=improving] .n-improving,[data-stage=verifying] .n-verifying { color:var(--brand-press); border-color:var(--brand); background:var(--blush) }
+    [data-stage=improving] .n-reading,[data-stage=verifying] .n-reading,[data-stage=verifying] .n-improving { color:var(--success); border-color:var(--success-line); background:var(--success-soft) }
+    .journey-doc { position:absolute; top:18px; left:6%; display:grid; place-items:center; width:58px; height:58px; color:white; border-radius:16px; background:var(--brand); box-shadow:0 12px 24px rgba(240,86,63,.32); transition:left .9s cubic-bezier(.3,.7,.3,1.15) } .journey-doc svg { width:30px; height:30px }
+    [data-stage=improving] .journey-doc { left:calc(50% - 29px) } [data-stage=verifying] .journey-doc { left:calc(94% - 58px) }
+    .journey-spark { position:absolute; width:9px; height:9px; border-radius:50%; background:var(--sun); pointer-events:none; opacity:0 }
+    .ready-card { position:relative; overflow:hidden }
+    .ready-stars { position:absolute; top:18px; right:22px; display:flex; gap:6px; align-items:center; color:var(--sun) } .ready-stars svg { width:18px; height:18px } .ready-stars .rs2 { width:14px; height:14px; color:var(--brand) } .ready-stars .rs3 { width:11px; height:11px }
+    .burst-layer { position:absolute; inset:0; overflow:hidden; pointer-events:none }
+    .burst-piece { position:absolute; top:30%; width:9px; height:13px; border-radius:2px; opacity:0 }
+    @media(prefers-reduced-motion:no-preference) { .journey-doc { animation:journey-bob 2.6s ease-in-out infinite } .journey-star { animation:journey-twinkle 2s ease-in-out infinite } .journey-star.s2 { animation-delay:.4s } .journey-star.s3 { animation-delay:.9s } .journey-star.s4 { animation-delay:1.3s } .journey-comet { animation:journey-comet 4.2s ease-in 1.2s infinite } .journey-spark { animation:journey-spark-pop .8s ease-out forwards } .sponsor-fly { animation:sponsor-fly .8s cubic-bezier(.2,.8,.25,1) both } .seal-badge.celebrate { animation:seal-pop .7s cubic-bezier(.3,1.4,.5,1) both } .burst-piece { animation:burst-fall 1.6s ease-out var(--delay,0s) forwards } .ready-stars svg { animation:journey-twinkle 2.4s ease-in-out infinite } .ready-stars .rs2 { animation-delay:.6s } .ready-stars .rs3 { animation-delay:1.1s } }
+    @keyframes journey-bob { 0%,100% { transform:translateY(0) } 50% { transform:translateY(-7px) } }
+    @keyframes journey-twinkle { 0%,100% { opacity:.25; transform:scale(.8) } 50% { opacity:1; transform:scale(1.12) } }
+    @keyframes journey-comet { 0% { transform:translateX(0); opacity:0 } 6% { opacity:.9 } 30% { transform:translateX(720px); opacity:0 } 100% { transform:translateX(720px); opacity:0 } }
+    @keyframes journey-spark-pop { 0% { opacity:1; transform:translate(0,0) scale(.6) } 100% { opacity:0; transform:translate(var(--dx,14px),var(--dy,-20px)) scale(1.3) } }
+    @keyframes sponsor-fly { from { opacity:0; transform:translateX(90px) scale(.97) } to { opacity:1; transform:none } }
+    @keyframes seal-pop { 0% { transform:scale(.82) } 60% { transform:scale(1.05) } 100% { transform:scale(1) } }
+    @keyframes burst-fall { 0% { opacity:1; transform:translate(0,-10px) rotate(0) } 100% { opacity:0; transform:translate(var(--dx,0),var(--dy,220px)) rotate(var(--rot,200deg)) } }
+    @media(max-width:680px) { .journey-scene { height:132px } .journey-doc { width:50px; height:50px } [data-stage=improving] .journey-doc { left:calc(50% - 25px) } [data-stage=verifying] .journey-doc { left:calc(94% - 50px) } }
     .summary-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 18px } .summary-chips .chip { font-size:14px }
     .produce-card { margin-bottom:20px; border-top:4px solid var(--brand) } .produce-grid { display:flex; flex-wrap:wrap; gap:30px; align-items:center } .produce-copy { flex:1 1 320px; min-width:0 } .produce-copy p { margin-top:7px; color:var(--muted) }
     .seal-badge { flex:0 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; width:190px; height:190px; padding:20px; border:6px solid var(--brand); border-radius:50%; background:var(--cream); box-shadow:0 0 0 3px white,0 0 0 4px var(--blush-line); text-align:center } .seal-badge span { color:var(--brand-press); font-size:14px; font-weight:850; letter-spacing:.06em; text-transform:uppercase } .seal-badge strong { color:var(--ink); font-family:var(--display); font-size:15px; line-height:1.25; font-weight:800 } .seal-badge .seal-fineprint { color:var(--ink-soft); font-size:14px; font-weight:700; letter-spacing:0; text-transform:none }
@@ -422,6 +482,38 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             current = repository.document(TENANT_ID, parent_id) if parent_id else None
         return False
 
+    def _journey_status(document: dict[str, Any]) -> dict[str, Any]:
+        """Job state + journey stage for the requested document's lineage.
+
+        Follows derived copies to the newest version so a client polling the
+        original upload sees the whole journey: reading → improving →
+        verifying → ready (or failed). ``location`` is the page to visit now.
+        """
+        deepest = document
+        seen: set[str] = set()
+        while deepest["id"] not in seen:
+            seen.add(deepest["id"])
+            child = repository.latest_child(TENANT_ID, deepest["id"])
+            if child is None:
+                break
+            deepest = child
+        job = repository.latest_job(TENANT_ID, deepest["id"])
+        state = job["state"] if job else "queued"
+        if state == "failed":
+            stage = "failed"
+        elif state == "succeeded":
+            stage = "ready"
+        elif deepest.get("parent_document_id"):
+            stage = "improving" if state == "queued" else "verifying"
+        else:
+            stage = "reading"
+        return {
+            "state": state,
+            "stage": stage,
+            "location": f"/documents/{deepest['id']}",
+            "display": _educator_display_name(document),
+        }
+
     def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str):
         """Steps 2 and 3 of the educator flow: one processing screen, one ready
         screen. The pipeline moves the teacher forward with no clicks at all."""
@@ -438,20 +530,44 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         if job_state not in {"succeeded", "failed"}:
             verifying = bool(document.get("parent_document_id"))
             status_line = "Verifying the new copy…" if verifying else "Reading your document…"
+            stage = "verifying" if verifying else "reading"
             stages = (
-                ("Reading your document", "A careful automatic review", "done" if verifying else "active"),
-                ("Applying safe improvements", "Only a copy is ever changed", "done" if verifying else ""),
-                ("Verifying the new copy", "A fresh review of the result", "active" if verifying else ""),
+                ("reading", "Reading your document", "A careful automatic review", "done" if verifying else "active"),
+                ("improving", "Applying safe improvements", "Only a copy is ever changed", "done" if verifying else ""),
+                ("verifying", "Verifying the new copy", "A fresh review of the result", "active" if verifying else ""),
             )
-            items = "".join(f'<li class="{state}"><strong>{escape(label)}</strong>{escape(hint)}</li>' for label, hint, state in stages)
+            items = "".join(
+                f'<li class="{state}" data-stage-item={key}><strong>{escape(label)}</strong>{escape(hint)}</li>'
+                for key, label, hint, state in stages
+            )
+            # The journey scene is decorative: the document travels its flight
+            # path between the three stops, with stars and a sponsor fly-by.
+            # Static under prefers-reduced-motion and fully described by the
+            # live text next to it.
+            scene = '''<div class=journey-scene aria-hidden=true>
+            <svg class="journey-star s1"><use href="#i-star"/></svg>
+            <svg class="journey-star s2"><use href="#i-star"/></svg>
+            <svg class="journey-star s3"><use href="#i-star"/></svg>
+            <svg class="journey-star s4"><use href="#i-star"/></svg>
+            <span class=journey-comet></span>
+            <div class=journey-track>
+            <span class="journey-node n-reading"><svg><use href="#i-doc"/></svg></span><span class=journey-line></span>
+            <span class="journey-node n-improving"><svg><use href="#i-spark"/></svg></span><span class=journey-line></span>
+            <span class="journey-node n-verifying"><svg><use href="#i-check"/></svg></span></div>
+            <div class=journey-doc><svg><use href="#i-doc"/></svg></div></div>'''
             progress = f'''<div class=workspace-inner><div class=flow-wrap>
-            <section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div>
-            <p class=eyebrow>Step 2 of 3</p><h2>{escape(status_line)}</h2>
-            <p>{escape(display)} · This page updates by itself every few seconds.</p>
-            <ol class=progress-list>{items}</ol></section>
-            {_sponsored_card()}</div></div>'''
+            <section class="panel progress-card journey-card" aria-label="Transforming your document"
+            data-journey=processing data-stage={stage} data-status-url="/documents/{escape(document_id)}/status.json">{scene}
+            <div class=journey-status role=status aria-live=polite aria-atomic=true>
+            <p class=eyebrow>Step 2 of 3</p><h2 data-journey-headline>{escape(status_line)}</h2>
+            <p>{escape(display)} · This page updates by itself every few seconds.</p></div>
+            <ol class=progress-list data-journey-stages>{items}</ol></section>
+            {_sponsored_card(fly=True)}</div></div>'''
+            # With scripting available the journey script polls the status
+            # endpoint and carries the page forward without reloads; the
+            # meta refresh stays as the complete no-JS fallback.
             return _response(start_response, "200 OK", _html_page("Transforming your document — Accessibility Hub",
-                             _educator_shell(progress, persona), "<meta http-equiv=\"refresh\" content=\"5\">"))
+                             _educator_shell(progress, persona), "<noscript><meta http-equiv=\"refresh\" content=\"5\"></noscript>"))
         result = (job or {}).get("result")
         if job_state == "failed" or not result:
             content = f'''<div class=workspace-inner><div class=flow-wrap><section class="panel ready-card">
@@ -522,7 +638,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             f'<span class=seal-fineprint>{escape(document["sha256"][:10])}…</span></div>'
         )
         content = f'''<div class=workspace-inner><div class=flow-wrap>
-        <section class="panel ready-card" aria-labelledby=ready-heading><p class=eyebrow>Step 3 of 3</p>
+        <section class="panel ready-card" aria-labelledby=ready-heading data-journey=ready>
+        <span class=ready-stars aria-hidden=true><svg class=rs1><use href="#i-star"/></svg><svg class=rs2><use href="#i-spark"/></svg><svg class=rs3><use href="#i-star"/></svg></span>
+        <p class=eyebrow>Step 3 of 3</p>
         <h1 id=ready-heading>Your document is ready.</h1>
         <p class=lead>{escape(display)} — reviewed, with the final page carrying the review record.</p>
         <div class=ready-actions>{download}</div>
@@ -541,6 +659,22 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             if asset.is_file():
                 payload = asset.read_bytes()
                 start_response("200 OK", [("Content-Type", "image/png"), ("Content-Length", str(len(payload))), ("Cache-Control", "public, max-age=86400"), ("X-Content-Type-Options", "nosniff")])
+                return [payload]
+            start_response("404 Not Found", [("Content-Length", "0")])
+            return [b""]
+        if path == "/assets/journey.js" and method == "GET":
+            # First-party journey enhancement script; the only script any page
+            # references, served same-origin to satisfy the CSP exactly.
+            # Development-only, like every educator surface that references it:
+            # hosted environments keep their exact prior routes and serve no
+            # script assets at all.
+            if settings.environment != "development":
+                start_response("404 Not Found", [("Content-Length", "0")])
+                return [b""]
+            asset = Path(__file__).resolve().parents[1] / "assets" / "journey.js"
+            if asset.is_file():
+                payload = asset.read_bytes()
+                start_response("200 OK", [("Content-Type", "text/javascript; charset=utf-8"), ("Content-Length", str(len(payload))), ("Cache-Control", "public, max-age=300"), ("X-Content-Type-Options", "nosniff")])
                 return [payload]
             start_response("404 Not Found", [("Content-Length", "0")])
             return [b""]
@@ -634,8 +768,11 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 <h1 id=drop-heading>Make your course material ready for students.</h1>
                 <p class=lead>Drop in a PDF (up to 50&nbsp;MB). We review it, apply safe improvements to a copy, and hand back a version that is ready to share.</p>
                 <form method=post action="/documents/upload" enctype="multipart/form-data">
+                <div class=dropzone data-dropzone>
+                <svg class=drop-glyph aria-hidden=true><use href="#i-doc"/></svg>
                 <label for=upload-file>Course material (PDF)</label>
                 <input id=upload-file type=file name=file accept="application/pdf,.pdf" required>
+                <p class=drop-hint data-drop-hint>Drag your PDF here, or choose a file above.</p></div>
                 <div class=actions><button class=ready-download>Transform my document <span aria-hidden=true>→</span></button></div>
                 </form></div></section>
                 {recent}
@@ -731,6 +868,16 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             document = repository.document(TENANT_ID, document_id)
             if document is None:
                 return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Document not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
+            if len(pieces) == 3 and pieces[2] == "status.json" and method == "GET":
+                # Journey status feed for the educator flow's same-origin
+                # script. Educator-session only: every other session — and
+                # every hosted environment — keeps its exact prior surface,
+                # so the route does not exist there.
+                if not educator:
+                    return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
+                payload = json.dumps(_journey_status(document)).encode()
+                start_response("200 OK", [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(payload))), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
+                return [payload]
             if len(pieces) == 2 and method == "GET" and educator and "view=advanced" not in environ.get("QUERY_STRING", ""):
                 return _educator_document_view(start_response, document, persona)
             if len(pieces) == 2 and method == "GET":

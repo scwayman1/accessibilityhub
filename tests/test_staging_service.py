@@ -1077,6 +1077,16 @@ class StagingServiceTests(unittest.TestCase):
         for word in SCRUBBED_WORDS:
             self.assertNotIn(word, text, f"'{word}' is visible on the {context} page")
 
+    def assert_csp_scripts(self, page):
+        """CSP compliance: same-origin scripts only, never inline code. Every
+        <script> tag on an educator page is the first-party journey file with
+        an empty body."""
+        tags = re.findall(rb"<script([^>]*)>(.*?)</script>", page, re.S)
+        self.assertTrue(tags, "expected the journey script tag on this page")
+        for attributes, body in tags:
+            self.assertIn(b'src="/assets/journey.js"', attributes)
+            self.assertEqual(body.strip(), b"", "inline script code is forbidden by the CSP")
+
     def test_educator_lands_on_a_single_drop_page_after_sso(self):
         self.login_sso()
         status, _, page = self.request("/app")
@@ -1129,9 +1139,11 @@ class StagingServiceTests(unittest.TestCase):
         # The sponsored card runs during processing, never gating results.
         self.assertIn(b">Sponsored</span>", page)
         self.assertIn(b"never delay your results", page)
-        # Meta-refresh cadence unchanged; still no scripts.
-        self.assertIn(b'http-equiv="refresh" content="5"', page)
-        self.assertNotIn(b"<script", page)
+        # Meta-refresh cadence unchanged as the no-JS fallback (inside
+        # noscript so the journey script can drive without reload races), and
+        # the only script is the same-origin journey file — no inline code.
+        self.assertIn(b'<noscript><meta http-equiv="refresh" content="5"></noscript>', page)
+        self.assert_csp_scripts(page)
         self.assert_scrubbed(page, "processing")
         # First worker pass: assess + auto-improve; the parent page now moves
         # the teacher forward to the improved copy without any click.
@@ -1302,6 +1314,143 @@ class StagingServiceTests(unittest.TestCase):
         for context, page in surfaces:
             self.assert_scrubbed(page, context)
         self.cookie = ""
+
+    # ------------------------------------------------------------------
+    # The galactic journey layer: status feed, same-origin script, sprite,
+    # and CSP compliance across the educator flow.
+    # ------------------------------------------------------------------
+
+    def test_journey_status_endpoint_is_educator_gated_and_follows_the_lineage(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.worker.stop()  # Hold jobs queued so each stage is observable.
+        self.login_sso()
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        educator_cookie = self.cookie
+        # No session at all: the login wall intercepts before the route.
+        status, headers, _ = self.request(f"/documents/{document_id}/status.json", cookie="none=1")
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(headers["Location"], "/login")
+        # An access-code session never sees the route: it does not exist.
+        self.login()
+        status, _, _ = self.request(f"/documents/{document_id}/status.json")
+        self.assertTrue(status.startswith("404"), status)
+        # The educator session gets the JSON feed: reading first.
+        self.cookie = educator_cookie
+        status, headers, body = self.request(f"/documents/{document_id}/status.json")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertTrue(headers["Content-Type"].startswith("application/json"))
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        payload = json.loads(body)
+        self.assertEqual(set(payload), {"state", "stage", "location", "display"})
+        self.assertEqual(payload["stage"], "reading")
+        self.assertEqual(payload["state"], "queued")
+        self.assertEqual(payload["location"], f"/documents/{document_id}")
+        self.assertEqual(payload["display"], "week 5-handout.pdf")
+        # First worker pass: the improved copy exists and is queued — polling
+        # the ORIGINAL id follows the lineage to the improving/verifying stage.
+        self.assertTrue(self.worker.run_once())
+        payload = json.loads(self.request(f"/documents/{document_id}/status.json")[2])
+        self.assertIn(payload["stage"], {"improving", "verifying"})
+        child_location = payload["location"]
+        self.assertNotEqual(child_location, f"/documents/{document_id}")
+        # Second pass: terminal. Stage ready, location is the final copy.
+        self.assertTrue(self.worker.run_once())
+        payload = json.loads(self.request(f"/documents/{document_id}/status.json")[2])
+        self.assertEqual(payload["stage"], "ready")
+        self.assertEqual(payload["state"], "succeeded")
+        self.assertEqual(payload["location"], child_location)
+        self.cookie = ""
+
+    def test_journey_script_is_served_first_party_and_pages_carry_scene_sprite_and_motion_gates(self):
+        from service.fixtures import synthetic_handout_pdf
+        # The asset itself: same-origin, JavaScript, no third-party reach.
+        status, headers, body = self.request("/assets/journey.js")
+        self.assertTrue(status.startswith("200"))
+        self.assertTrue(headers["Content-Type"].startswith("text/javascript"))
+        self.assertNotIn(b"http://", body)
+        self.assertNotIn(b"https://", body)
+        self.assertIn(b"prefers-reduced-motion", body)
+        self.worker.stop()
+        self.login_sso()
+        drop = self.request("/app")[2]
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        processing = self.request(f"/documents/{document_id}")[2]
+        self.assertTrue(self.worker.run_once())
+        self.assertTrue(self.worker.run_once())
+        final_id = self.wait_for_pipeline(document_id)
+        ready = self.request(f"/documents/{final_id}")[2]
+        for name, page in (("drop", drop), ("processing", processing), ("ready", ready)):
+            self.assert_csp_scripts(page)
+            self.assertIn(b"<symbol id=i-doc", page, name)
+            self.assertIn(b"<symbol id=i-star", page, name)
+            self.assertIn(b"prefers-reduced-motion", page, name)
+            self.assertIn(b"prefers-reduced-motion:no-preference", page, name)
+        # Drop page: the enhanced drop zone wraps the plain form control.
+        self.assertIn(b"data-dropzone", drop)
+        self.assertIn(b"data-drop-hint", drop)
+        # Processing page: journey scene, status feed wiring, staged stops,
+        # and the labeled sponsor fly-by outside the live region.
+        self.assertIn(b"data-journey=processing", processing)
+        self.assertIn(f'data-status-url="/documents/{document_id}/status.json"'.encode(), processing)
+        self.assertIn(b"data-stage=reading", processing)
+        for marker in (b"journey-scene", b"journey-doc", b"journey-comet", b"journey-star",
+                       b'data-stage-item=reading', b'data-stage-item=improving', b'data-stage-item=verifying'):
+            self.assertIn(marker, processing)
+        self.assertIn(b"sponsor-fly", processing)
+        self.assertIn(b">Sponsored</span>", processing)
+        sponsor_tag = re.search(rb'<aside class="panel sponsor-card[^"]*"[^>]*>', processing)
+        self.assertIsNotNone(sponsor_tag)
+        self.assertNotIn(b"aria-live", sponsor_tag.group(0))  # Sponsor content is never a live region.
+        # Ready page: celebration hooks, no sponsor, no status polling.
+        self.assertIn(b"data-journey=ready", ready)
+        self.assertIn(b"ready-stars", ready)
+        self.assertNotIn(b"data-status-url", ready)
+        self.assertNotIn(b">Sponsored</span>", ready)
+        self.cookie = ""
+
+    def test_classic_surfaces_stay_script_free_and_hosted_never_serves_the_status_route(self):
+        # The access-code surface keeps its no-script pages byte-for-byte in
+        # spirit: no script tags anywhere on login, workspace, or documents.
+        status, _, login_page = self.request("/login")
+        self.assertTrue(status.startswith("200"))
+        self.assertNotIn(b"<script", login_page)
+        self.login()
+        workspace = self.request("/app")[2]
+        self.assertNotIn(b"<script", workspace)
+        self.worker.stop()  # Hold the job so the classic running page is observable.
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        running = self.request(f"/documents/{document_id}")[2]
+        self.assertNotIn(b"<script", running)
+        # The classic sponsor card keeps its exact presentation: no fly-by.
+        self.assertIn(b'<aside class="panel sponsor-card" aria-label="Sponsored message">', running)
+        self.assertTrue(self.worker.run_once())  # Drive the held job to terminal.
+        classic = self.request(f"/documents/{document_id}")[2]
+        self.assertNotIn(b"<script", classic)
+        self.cookie = ""
+        # Hosted staging: no educator session exists, so the status route 404s
+        # even for a signed-in access-code session — boundary untouched.
+        hosted = ServiceSettings("staging", Path(self.temp.name) / "journey-hosted", "synthetic-only-code", "s" * 48, (), allow_hosted_synthetic=True)
+        repository = StagingRepository(hosted.data_dir)
+        worker = AssessmentWorker(repository)
+        self.app = create_app(hosted, repository, worker)
+        try:
+            self.login()
+            _, headers, _ = self.request("/documents/synthetic", "POST")
+            hosted_doc = headers["Location"].rsplit("/", 1)[-1]
+            status, _, _ = self.request(f"/documents/{hosted_doc}/status.json")
+            self.assertTrue(status.startswith("404"), status)
+            # Hosted environments serve no script assets at all: the journey
+            # file is a development-only route, so the hosted surface gains
+            # zero new endpoints.
+            status, _, _ = self.request("/assets/journey.js")
+            self.assertTrue(status.startswith("404"), status)
+        finally:
+            worker.stop()
+            self.app = create_app(self.settings, self.repository, self.worker)
+            self.cookie = ""
 
     def test_new_educator_text_ground_pairs_meet_contrast_contract(self):
         from tests.test_design_contract import contrast_ratio
