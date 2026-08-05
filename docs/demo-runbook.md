@@ -323,6 +323,10 @@ a failure.
 Run through this the night before *and* the morning of:
 
 - [ ] `python3.11 -m pytest tests/ -q` — full suite green.
+- [ ] `python3.11 scripts/make_test_corpus.py && python3.11
+      scripts/transform_bench.py corpus --fast` — exit 0: every corpus document
+      transforms or declines for a stated reason. Open
+      `bench-out/bench-report.html` if any row surprises you.
 - [ ] `rm -rf .hub-staging` — clean workspace, no rehearsal records.
 - [ ] Start the demo exactly as in section 1, then run the smoke test against
       it and expect exit code 0:

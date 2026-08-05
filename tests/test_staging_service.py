@@ -218,6 +218,12 @@ class StagingServiceTests(unittest.TestCase):
                     "synthetic_intake_ready", "hosted_boundary_ready", "hosted_intake_enabled",
                     "configured_hosted_controls"):
             self.assertIn(key, payload)
+        # Read-only toolchain visibility: every tool name maps to a version
+        # string or null (absent). No behavior key hides in here.
+        self.assertIn("toolchain", payload)
+        self.assertEqual(set(payload["toolchain"]), {"qpdf", "tesseract", "verapdf"})
+        for value in payload["toolchain"].values():
+            self.assertTrue(value is None or isinstance(value, str))
 
     def test_hosted_synthetic_flag_requires_exact_true_and_leaves_development_unaffected(self):
         base = {"HUB_ENV": "staging", "HUB_STAGING_ACCESS_CODE": "code", "HUB_SESSION_SECRET": "s" * 48}
