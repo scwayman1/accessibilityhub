@@ -74,6 +74,22 @@ _JOURNEY_SPRITE = (
     '</svg>'
 )
 
+# The decorative journey flight path shared by the educator processing screen
+# and the hosted sample-review processing screen. Purely presentational
+# (aria-hidden), animated only under prefers-reduced-motion:no-preference,
+# and always accompanied by live text that fully describes the state.
+_JOURNEY_SCENE = '''<div class=journey-scene aria-hidden=true>
+            <svg class="journey-star s1"><use href="#i-star"/></svg>
+            <svg class="journey-star s2"><use href="#i-star"/></svg>
+            <svg class="journey-star s3"><use href="#i-star"/></svg>
+            <svg class="journey-star s4"><use href="#i-star"/></svg>
+            <span class=journey-comet></span>
+            <div class=journey-track>
+            <span class="journey-node n-reading"><svg><use href="#i-doc"/></svg></span><span class=journey-line></span>
+            <span class="journey-node n-improving"><svg><use href="#i-spark"/></svg></span><span class=journey-line></span>
+            <span class="journey-node n-verifying"><svg><use href="#i-check"/></svg></span></div>
+            <div class=journey-doc><svg><use href="#i-doc"/></svg></div></div>'''
+
 
 def _when(iso: str) -> str:
     try:
@@ -164,14 +180,14 @@ def _lane_counts(result: dict[str, Any] | None) -> dict[str, int]:
     return counts
 
 
-def _summary_chips(counts: dict[str, int]) -> str:
+def _summary_chips(counts: dict[str, int], extra_class: str = "") -> str:
     chips = []
     for lane in LANE_ORDER:
         count = counts.get(lane, 0)
         singular, plural = SUMMARY_PHRASES[lane]
         phrase = singular if count == 1 else plural
         chips.append(f'<span class="summary-item {lane}"><span class=chip>{count} {phrase}</span></span>')
-    return f'<div class=summary-chips aria-label="Review at a glance">{"".join(chips)}</div>'
+    return f'<div class="summary-chips{extra_class}" aria-label="Review at a glance">{"".join(chips)}</div>'
 
 
 def _suggested_title(filename: str, source_kind: str) -> str:
@@ -337,6 +353,10 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     @keyframes seal-pop { 0% { transform:scale(.82) } 60% { transform:scale(1.05) } 100% { transform:scale(1) } }
     @keyframes burst-fall { 0% { opacity:1; transform:translate(0,-10px) rotate(0) } 100% { opacity:0; transform:translate(var(--dx,0),var(--dy,220px)) rotate(var(--rot,200deg)) } }
     @media(max-width:680px) { .journey-scene { height:132px } .journey-doc { width:50px; height:50px } [data-stage=improving] .journey-doc { left:calc(50% - 25px) } [data-stage=verifying] .journey-doc { left:calc(94% - 50px) } }
+    /* Hosted sample-review arrival: results rise in one after another, and the recheck banner celebrates. Motion only under prefers-reduced-motion:no-preference; otherwise everything is simply present. */
+    .celebrate { position:relative; overflow:hidden }
+    @media(prefers-reduced-motion:no-preference) { .arrive { animation:rise-in .55s cubic-bezier(.22,.7,.32,1) both } .arrive.a2 { animation-delay:.09s } .arrive.a3 { animation-delay:.18s } .arrive.a4 { animation-delay:.27s } .celebrate .completion-mark { animation:seal-pop .7s cubic-bezier(.3,1.4,.5,1) both } }
+    @keyframes rise-in { from { opacity:0; transform:translateY(16px) } to { opacity:1; transform:none } }
     .summary-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 18px } .summary-chips .chip { font-size:14px }
     .produce-card { margin-bottom:20px; border-top:4px solid var(--brand) } .produce-grid { display:flex; flex-wrap:wrap; gap:30px; align-items:center } .produce-copy { flex:1 1 320px; min-width:0 } .produce-copy p { margin-top:7px; color:var(--muted) }
     .seal-badge { flex:0 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; width:190px; height:190px; padding:20px; border:6px solid var(--brand); border-radius:50%; background:var(--cream); box-shadow:0 0 0 3px white,0 0 0 4px var(--blush-line); text-align:center } .seal-badge span { color:var(--brand-press); font-size:14px; font-weight:850; letter-spacing:.06em; text-transform:uppercase } .seal-badge strong { color:var(--ink); font-family:var(--display); font-size:15px; line-height:1.25; font-weight:800 } .seal-badge .seal-fineprint { color:var(--ink-soft); font-size:14px; font-weight:700; letter-spacing:0; text-transform:none }
@@ -523,6 +543,27 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             "display": _educator_display_name(document),
         }
 
+    def _improvement_story(document_id: str) -> list[tuple[str, str]]:
+        """Plain-language cards for the fixes recorded on this version: what
+        changed and why it helps a student. Never a claim about the document
+        as a whole — each entry names one recorded change."""
+        improvements: list[tuple[str, str]] = []
+        for row in repository.remediations(TENANT_ID, document_id):
+            if row["kind"] == "seal":
+                continue
+            if row["kind"] == "metadata":
+                for action in (row.get("provenance") or {}).get("actions", []):
+                    if action.get("rule_id") == "PDF.METADATA.TITLE":
+                        improvements.append(("Title added", f"Screen readers now announce “{action.get('value') or ''}” instead of a filename."))
+                    elif action.get("rule_id") == "PDF.METADATA.LANGUAGE":
+                        value = str(action.get("value") or "")
+                        language = "English (US)" if value == "en-US" else value
+                        improvements.append((f"Language set to {language}", "Assistive technology can now pick the right voice and pronunciation."))
+            else:
+                improvements.append((REMEDIATION_LABELS.get(row["kind"], row["kind"]),
+                                     "Applied to this copy, with a full record of the change."))
+        return improvements
+
     def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str):
         """Steps 2 and 3 of the educator flow: one processing screen, one ready
         screen. The pipeline moves the teacher forward with no clicks at all."""
@@ -553,20 +594,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             # path between the three stops, with stars and a sponsor fly-by.
             # Static under prefers-reduced-motion and fully described by the
             # live text next to it.
-            scene = '''<div class=journey-scene aria-hidden=true>
-            <svg class="journey-star s1"><use href="#i-star"/></svg>
-            <svg class="journey-star s2"><use href="#i-star"/></svg>
-            <svg class="journey-star s3"><use href="#i-star"/></svg>
-            <svg class="journey-star s4"><use href="#i-star"/></svg>
-            <span class=journey-comet></span>
-            <div class=journey-track>
-            <span class="journey-node n-reading"><svg><use href="#i-doc"/></svg></span><span class=journey-line></span>
-            <span class="journey-node n-improving"><svg><use href="#i-spark"/></svg></span><span class=journey-line></span>
-            <span class="journey-node n-verifying"><svg><use href="#i-check"/></svg></span></div>
-            <div class=journey-doc><svg><use href="#i-doc"/></svg></div></div>'''
             progress = f'''<div class=workspace-inner><div class=flow-wrap>
             <section class="panel progress-card journey-card" aria-label="Transforming your document"
-            data-journey=processing data-stage={stage} data-status-url="/documents/{escape(document_id)}/status.json">{scene}
+            data-journey=processing data-stage={stage} data-status-url="/documents/{escape(document_id)}/status.json">{_JOURNEY_SCENE}
             <div class=journey-status role=status aria-live=polite aria-atomic=true>
             <p class=eyebrow>Step 2 of 3</p><h2 data-journey-headline>{escape(status_line)}</h2>
             <p>{escape(display)} · This page updates by itself every few seconds.</p></div>
@@ -587,21 +617,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             return _response(start_response, "200 OK", _html_page("Accessibility Hub", _educator_shell(content, persona)))
 
         # ---- Step 3: ready ------------------------------------------------
-        improvements: list[tuple[str, str]] = []
-        for row in repository.remediations(TENANT_ID, document_id):
-            if row["kind"] == "seal":
-                continue
-            if row["kind"] == "metadata":
-                for action in (row.get("provenance") or {}).get("actions", []):
-                    if action.get("rule_id") == "PDF.METADATA.TITLE":
-                        improvements.append(("Title added", f"Screen readers now announce “{action.get('value') or ''}” instead of a filename."))
-                    elif action.get("rule_id") == "PDF.METADATA.LANGUAGE":
-                        value = str(action.get("value") or "")
-                        language = "English (US)" if value == "en-US" else value
-                        improvements.append((f"Language set to {language}", "Assistive technology can now pick the right voice and pronunciation."))
-            else:
-                improvements.append((REMEDIATION_LABELS.get(row["kind"], row["kind"]),
-                                     "Applied to this copy, with a full record of the change."))
+        improvements = _improvement_story(document_id)
         # ---- See what changed: real page-1 thumbnails + change callouts ---
         root_doc = document
         walked: set[str] = set()
@@ -830,6 +846,11 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         persona = (session or {}).get("display") or ""
         actor = (session or {}).get("actor") or ACTOR_ID
         dev = settings.environment == "development"
+        # Hosted presentation flag only: it re-skins pages the hosted service
+        # already serves (processing and results) and never adds a route, a
+        # script, or an intake surface. Every boundary check keys off the
+        # environment and session exactly as before.
+        hosted = settings.environment == "staging"
         # The three-step educator flow exists only for the demo SSO session in
         # development. Access-code sessions — and every hosted environment —
         # keep the classic surface byte-for-byte.
@@ -1030,6 +1051,39 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 if not terminal:
                     current_step = "check" if is_recheck else "review"
                     is_upload = document["source_kind"] == "educator_upload"
+                    if hosted:
+                        # Journey-grade processing for the hosted sample flow:
+                        # the same decorative flight path the educator screen
+                        # earned, rendered entirely server-side. No scripts,
+                        # no polling endpoint — the unconditional meta refresh
+                        # below stays the whole mechanism, and the scene is
+                        # still while prefers-reduced-motion is set.
+                        phase_label = "Checking your improved copy" if is_recheck else "Reviewing the sample"
+                        headline = "Rechecking the improved copy…" if is_recheck else "Looking for useful accessibility signals…"
+                        if is_recheck:
+                            stages = (
+                                ("Improved copy prepared", "Only a copy was changed", "done"),
+                                ("Rechecking signals", "The same review, run fresh", "active"),
+                                ("Comparing versions", "What changed, next to the original", ""),
+                            )
+                            gate_line = "The comparison opens once this recheck completes."
+                        else:
+                            stages = (
+                                ("Sample prepared", "Bundled content only", "done"),
+                                ("Reviewing signals", "Metadata, structure, and text", "active"),
+                                ("Building next steps", "Plain-language guidance", ""),
+                            )
+                            gate_line = "Review first — the Fix Lab opens once this review completes."
+                        items = "".join(f'<li class="{state}"><strong>{escape(label)}</strong>{escape(hint)}</li>' for label, hint, state in stages)
+                        progress = f'''<div class=workspace-inner>{_JOURNEY_SPRITE}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {'recheck' if is_recheck else 'review'}</p><h1>{escape(phase_label)}</h1><p class=lead>{escape(document['filename'])}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>In progress</span></header>
+                        <section class="panel progress-card journey-card" aria-label="{escape(phase_label)}" data-stage=improving>{_JOURNEY_SCENE}
+                        <div class=journey-status role=status aria-live=polite aria-atomic=true>
+                        <p class=eyebrow>Deterministic review</p><h2>{escape(headline)}</h2>
+                        <p>This usually takes a few seconds. This page checks again every five seconds.</p></div>
+                        <ol class=progress-list>{items}</ol>
+                        <div class=actions><a class="button secondary" href="/documents/{escape(document_id)}">Refresh now</a></div>
+                        <p class=small>{escape(gate_line)}</p></section>{_sponsored_card(fly=True)}</div>'''
+                        return _response(start_response, "200 OK", _html_page("Review in progress — Accessibility Hub", _app_shell(current_step, progress, signed_in, dev, persona), refresh_head))
                     phase_label = "Checking your improved copy" if is_recheck else ("Reviewing your document" if is_upload else "Reviewing the sample")
                     prepared_step = "<strong>Upload received</strong>Stays on this machine" if is_upload else "<strong>Sample prepared</strong>Bundled content only"
                     progress = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / review</p><h1>{escape(phase_label)}</h1><p class=lead>{escape(document['filename'])}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>In progress</span></header><section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div><p class=eyebrow>Deterministic review</p><h2>Looking for useful accessibility signals…</h2><p>This usually takes a few seconds. This page checks again every five seconds.</p><ol class=progress-list><li>{prepared_step}</li><li class=active><strong>Reviewing signals</strong>Metadata, structure, and text</li><li><strong>Building next steps</strong>Plain-language guidance</li></ol><div class=actions><a class="button secondary" href="/documents/{escape(document_id)}">Refresh now</a></div><p class=small>Review first — the Fix Lab opens once this review completes.</p></section>{_sponsored_card()}</div>'''
@@ -1048,13 +1102,32 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         completion_line = f"{resolved_count} accessibility signal{'s are' if resolved_count != 1 else ' is'} now verified in the recheck. The original {original_word} remains unchanged."
                     else:
                         completion_line = f"Compare the lanes with the previous version to see what changed. The original {original_word} remains unchanged."
-                    completion = f'''<div class=completion role=status><span class=completion-mark aria-hidden=true>✓</span><div><h2>Your improved copy is ready</h2><p>{completion_line}</p></div></div>'''
+                    # Hosted arrival: the banner celebrates with the journey
+                    # stars and a one-shot pop on the check mark — decorative
+                    # only, stilled under prefers-reduced-motion.
+                    banner_class = "completion celebrate arrive" if hosted else "completion"
+                    banner_stars = ('<span class=ready-stars aria-hidden=true><svg class=rs1><use href="#i-star"/></svg>'
+                                    '<svg class=rs2><use href="#i-spark"/></svg><svg class=rs3><use href="#i-star"/></svg></span>') if hosted else ""
+                    completion = f'''<div class="{banner_class}" role=status>{banner_stars}<span class=completion-mark aria-hidden=true>✓</span><div><h2>Your improved copy is ready</h2><p>{completion_line}</p></div></div>'''
                 header_title = "Recheck complete" if is_recheck else "Review findings"
                 header_lead = "See what changed, then explore the remaining signals." if is_recheck else "Read each signal, decide what to improve, and verify the new version without losing the record of what changed."
                 state_label = STATE_LABELS.get(job_state, "Review queued")
                 source_label = SOURCE_LABELS.get(document["source_kind"], document["source_kind"])
                 counts = _lane_counts(result)
-                summary_row = _summary_chips(counts) if job_state == "succeeded" and result else ""
+                hosted_reveal = hosted and job_state == "succeeded" and bool(result)
+                summary_row = _summary_chips(counts, " arrive a2" if hosted_reveal else "") if job_state == "succeeded" and result else ""
+                # Hosted recheck: narrate the recorded fixes as insight cards —
+                # the same "What we improved" story the educator ready page
+                # tells, built from the identical provenance rows.
+                improved_story = ""
+                if hosted_reveal and is_recheck:
+                    story = _improvement_story(document_id)
+                    if story:
+                        cards = "".join(f"<li><strong>{escape(title)}</strong><p>{escape(detail)}</p></li>" for title, detail in story)
+                        improved_story = f'''<section class="panel insight-card insight-improved arrive a3" aria-labelledby=improved-heading>
+                        <div class=insight-head><span class=icon-chip aria-hidden=true>✓</span><h2 id=improved-heading>What we improved</h2></div>
+                        <ul class=improve-list>{cards}</ul>
+                        <p class=small>Improvements were applied to this copy. The earlier version is unchanged.</p></section>'''
                 produce_card = ""
                 if dev and job_state == "succeeded" and result and (is_recheck or counts["needs_attention"] == 0):
                     badge = (
@@ -1090,7 +1163,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 else:
                     parent_link = f'<a class="button secondary" href="/documents/{escape(document["parent_document_id"])}">View original sample</a>' if is_recheck else '<a class="button secondary" href="/app">Start another sample</a>'
                     fixlab = f'''<aside class=fixlab><p class=eyebrow>Next step</p><h2>{'Compare the result' if is_recheck else 'Try another sample'}</h2><p>{'The rechecked copy is stored as a separate version of the same lineage.' if is_recheck else 'This assessment did not complete, so no fixes were applied.'}</p><div class=actions>{parent_link}<a class="button secondary" href="/app">Workspace</a></div><div class=advanced>{cleanup}</div></aside>'''
-                content = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else 'Synthetic demo only'}</span></header>{completion}{summary_row}{produce_card}<div class=document-layout>{findings}{fixlab}</div></div>'''
+                sprite = _JOURNEY_SPRITE if hosted_reveal else ""
+                layout_class = "document-layout arrive a4" if hosted_reveal else "document-layout"
+                content = f'''<div class=workspace-inner>{sprite}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else 'Synthetic demo only'}</span></header>{completion}{improved_story}{summary_row}{produce_card}<div class="{layout_class}">{findings}{fixlab}</div></div>'''
                 return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", _app_shell("check" if is_recheck else "improve", content, signed_in, dev, persona), refresh_head))
             if len(pieces) == 3 and pieces[2] == "produced" and method == "GET":
                 # Development-only, auth-gated (we are already behind the login
