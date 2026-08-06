@@ -1621,6 +1621,152 @@ class StagingServiceTests(unittest.TestCase):
         for foreground, background in pairs:
             self.assertGreaterEqual(contrast_ratio(foreground, background), 4.5, (foreground, background))
 
+    # ------------------------------------------------------------------
+    # The hosted sample journey: journey-grade processing and insight-card
+    # arrival for the access-code flow on staging — with zero new routes,
+    # zero scripts, and the classic development surface untouched.
+    # ------------------------------------------------------------------
+
+    def test_hosted_processing_page_gets_the_journey_scene_script_free(self):
+        self._optin_app()
+        self.worker.stop()  # Hold the job queued so the processing page is observable.
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        status, _, page = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("200"))
+        # Journey scene and sprite, rendered entirely server-side (markup
+        # markers, not just the shared stylesheet).
+        for marker in (b"<div class=journey-scene", b"<div class=journey-doc", b'class="journey-node',
+                       b"<span class=journey-comet", b"<symbol id=i-doc", b"<symbol id=i-star",
+                       b"data-stage=improving"):
+            self.assertIn(marker, page, marker)
+        # Honest staged stops for an assess-only sample review.
+        self.assertIn(b"Sample prepared", page)
+        self.assertIn(b"Reviewing signals", page)
+        self.assertIn(b"Building next steps", page)
+        # Fully script-free: the unconditional meta refresh is the whole
+        # mechanism — no <script>, no noscript wrapper, no polling wiring.
+        self.assertIn(b'http-equiv="refresh"', page)
+        self.assertNotIn(b"<noscript>", page)
+        self.assertNotIn(b"<script", page)
+        self.assertNotIn(b"data-status-url", page)
+        self.assertNotIn(b"data-journey", page)
+        self.assertNotIn(b"journey.js", page)
+        # Live-region semantics and the manual fallback stay.
+        self.assertIn(b"role=status", page)
+        self.assertIn(b"aria-live=polite", page)
+        self.assertIn(b"Refresh now", page)
+        self.assertIn(b"checks again every five seconds", page)
+        # The sponsor card rides along with the fly-in variant, and every
+        # animation stays behind the reduced-motion gate.
+        self.assertIn(b"sponsor-fly", page)
+        self.assertIn(b">Sponsored</span>", page)
+        self.assertIn(b"prefers-reduced-motion:no-preference", page)
+        self.assertIn(b"prefers-reduced-motion:reduce", page)
+        # Terminal: the refresh stops exactly as before.
+        self.assertTrue(self.worker.run_once())
+        _, _, page = self.request(f"/documents/{document_id}")
+        self.assertNotIn(b'http-equiv="refresh"', page)
+        self.cookie = ""
+
+    def test_hosted_recheck_journey_and_what_we_improved_arrival(self):
+        self._optin_app()
+        self.worker.stop()
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        source_id = headers["Location"].rsplit("/", 1)[-1]
+        self.assertTrue(self.worker.run_once())
+        _, headers, _ = self.request(
+            f"/documents/{source_id}/remediate/metadata", "POST",
+            {"title": "Week 3 Course Handout", "language": "en-US"},
+        )
+        child_id = headers["Location"].rsplit("/", 1)[-1]
+        # Recheck processing: the journey scene with recheck-specific stops.
+        status, _, page = self.request(f"/documents/{child_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"Checking your improved copy", page)
+        self.assertIn(b"Improved copy prepared", page)
+        self.assertIn(b"Rechecking signals", page)
+        self.assertIn(b"Comparing versions", page)
+        self.assertIn(b"<div class=journey-scene", page)
+        self.assertIn(b'http-equiv="refresh"', page)
+        self.assertNotIn(b"<script", page)
+        # Arrival: celebration banner, the What-we-improved story, and the
+        # staggered reveal classes — while every smoke-pinned string stays.
+        self.assertTrue(self.worker.run_once())
+        status, _, page = self.request(f"/documents/{child_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b'class="completion celebrate arrive"', page)
+        self.assertIn(b"ready-stars", page)
+        self.assertIn(b"Your improved copy is ready", page)
+        self.assertIn(b"What we improved", page)
+        self.assertIn(b"Title added", page)
+        self.assertIn("“Week 3 Course Handout”".encode(), page)
+        self.assertIn(b"Language set to English (US)", page)
+        self.assertIn(b"Improvements were applied to this copy.", page)
+        self.assertIn(b'class="summary-chips arrive a2"', page)
+        self.assertIn(b'class="document-layout arrive a4"', page)
+        self.assertIn(b"<symbol id=i-star", page)
+        self.assertIn(b"Verified signal", page)   # smoke: repair shows as verified
+        self.assertIn(b"metadata", page)          # smoke: change history recorded
+        self.assertNotIn(b"<script", page)
+        self.assertNotIn(b'http-equiv="refresh"', page)
+        self.cookie = ""
+
+    def test_hosted_first_review_reveal_keeps_lane_strings_and_fix_lab(self):
+        self._optin_app()
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        self.wait_for_result(document_id)
+        status, _, page = self.request(f"/documents/{document_id}")
+        self.assertTrue(status.startswith("200"))
+        # The reveal decorates; nothing the smoke script pins may move.
+        self.assertIn(b'class="summary-chips arrive a2"', page)
+        self.assertIn(b'class="document-layout arrive a4"', page)
+        self.assertIn(b"Needs attention", page)
+        self.assertIn(b"Not assessed", page)
+        self.assertIn(b"does not create an overall result", page)
+        self.assertIn(b"Fix the clearest issues", page)
+        self.assertIn(b"Apply and recheck", page)
+        # A first review records no fix, so no improvement story is invented.
+        self.assertNotIn(b"What we improved", page)
+        self.assertNotIn(b"<script", page)
+        self.cookie = ""
+
+    def test_hosted_journey_adds_no_routes_and_dev_classic_pages_are_unchanged(self):
+        # Hosted: the presentation upgrade must not open any new endpoint.
+        self._optin_app()
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        for probe in ("/assets/journey.js", f"/documents/{document_id}/status.json"):
+            status, _, _ = self.request(probe)
+            self.assertTrue(status.startswith("404"), probe)
+        self.worker.stop()
+        self.cookie = ""
+        # Development access-code sessions keep the classic spinner surface.
+        dev_repository = StagingRepository(Path(self.temp.name) / "dev-classic")
+        dev_worker = AssessmentWorker(dev_repository)
+        self.app, self.repository, self.worker = create_app(self.settings, dev_repository, dev_worker), dev_repository, dev_worker
+        self.worker.stop()
+        self.login()
+        _, headers, _ = self.request("/documents/synthetic", "POST")
+        dev_doc = headers["Location"].rsplit("/", 1)[-1]
+        _, _, page = self.request(f"/documents/{dev_doc}")
+        self.assertIn(b"progress-orb", page)
+        self.assertNotIn(b"<div class=journey-scene", page)
+        self.assertNotIn(b"sponsor-card sponsor-fly", page)
+        self.assertTrue(self.worker.run_once())
+        _, _, page = self.request(f"/documents/{dev_doc}")
+        # The reveal/celebrate classes exist only in the stylesheet, never in
+        # the development markup.
+        self.assertNotIn(b'class="summary-chips arrive', page)
+        self.assertNotIn(b'class="document-layout arrive', page)
+        self.assertNotIn(b'celebrate arrive"', page)
+        self.cookie = ""
+
     def test_service_files_and_doc_never_use_prohibited_outcome_language(self):
         """CI governance mirror for the files this boundary owns.
 
