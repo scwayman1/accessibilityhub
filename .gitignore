@@ -4,3 +4,5 @@ fixtures/
 __pycache__/
 .hub-staging/
 nohup.out
+corpus/
+bench-out/

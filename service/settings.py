@@ -67,6 +67,9 @@ class ServiceSettings:
         return self.environment == "staging" and self.allow_hosted_synthetic
 
     def health_payload(self) -> dict[str, object]:
+        # Imported lazily so configuration parsing never depends on tool probes.
+        from service.toolchain import toolchain_versions
+
         return {
             "ok": True,
             "service": "accessibility-hub-staging",
@@ -78,4 +81,8 @@ class ServiceSettings:
             "hosted_intake_enabled": False,
             "hosted_synthetic_optin": self.allow_hosted_synthetic,
             "configured_hosted_controls": list(self.hosted_controls),
+            # Read-only visibility: which document tools this environment has.
+            # Names map to a version line, or null when the tool is absent —
+            # absent tools are disclosed per-review by the checker itself.
+            "toolchain": dict(toolchain_versions()),
         }

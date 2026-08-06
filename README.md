@@ -94,6 +94,39 @@ python3.11 scripts/staging_smoke.py --base-url http://127.0.0.1:8787 \
 Use the access code printed by `scripts/demo_up.sh`. Exit code 0 means every
 required check passed. Run it against the hosted URL after every deploy.
 
+## Test bench
+
+Generate a varied synthetic corpus, then watch the real pipeline — the same
+`check_pdf.analyze` → auto-improve-a-copy → re-assess → `tina.seal` path the
+staging worker runs — transform every document:
+
+```sh
+python3.11 scripts/make_test_corpus.py                 # writes ./corpus/ (gitignored)
+python3.11 scripts/transform_bench.py corpus --out bench-out
+```
+
+The corpus covers missing title/language, unnamed links, tagged figures without
+alt text, an untagged multi-block document, a scanned page with no text layer,
+an encrypted PDF, an already-well-formed document, a 50-page timing document,
+and filenames with spaces and non-ASCII characters. `--list` names them,
+`--only <name>` generates one, and every document except the encrypted one is
+byte-for-byte reproducible.
+
+The bench prints a per-document before/after table plus an honest toolchain
+status block, writes the improved `.ready.pdf` copies and a self-contained
+`bench-out/bench-report.html` (before→after lanes, what changed with
+provenance, timing, tool status), and exits 0 only when every document either
+transformed, needed no changes, or declined for an expected, plainly stated
+reason (an encrypted PDF declining is expected; a crash is not). `--fast`
+skips the 50-pager; `--json` emits machine-readable results for refinement
+loops. Bench output is technical evidence and review routing only — never an
+accessibility determination.
+
+Toolchain visibility: `scripts/demo_up.sh` prints the same detection block on
+startup, and `/healthz` reports it read-only under `"toolchain"`
+(name → version line, or `null` when absent — absent tools are disclosed
+per-review under *Review completeness*).
+
 ## Demo
 
 The click-by-click morning demo script — setup, storyline, talking points,

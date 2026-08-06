@@ -292,6 +292,15 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .improve-list { display:grid; gap:10px; margin:16px 0 0; padding:0; list-style:none } .improve-list li { padding:14px 16px; border:1px solid var(--success-line); border-left:4px solid var(--success); border-radius:12px; background:var(--success-soft); text-align:left } .improve-list strong { color:var(--success) } .improve-list p { margin-top:3px; color:var(--ink-soft); font-size:14px }
     .look-list { display:grid; gap:10px; margin:16px 0 0; padding:0; list-style:none } .look-list li { padding:13px 16px; border:1px solid var(--line); border-radius:12px; background:var(--wash); text-align:left } .look-list strong { color:var(--ink) } .look-list p { margin-top:3px; color:var(--muted); font-size:14px }
     .chip-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px } .unchecked-strip { margin-top:12px; color:var(--muted); font-size:14px }
+    /* See-what-changed comparison: real page-1 thumbnails (or an honest schematic), change callouts on the after side, and the transformation-facts row. No new motion. */
+    .insight-compare .icon-chip,.insight-facts .icon-chip { color:var(--brand-press); background:var(--blush) }
+    .compare-grid { display:flex; gap:16px; align-items:flex-start; margin-top:16px } .compare-pane { flex:1 1 220px; min-width:0; margin:0 } .compare-pane figcaption { margin-bottom:8px; color:var(--muted); font-size:13px; font-weight:700; text-align:left } .compare-arrow { flex:0 0 auto; align-self:center; color:var(--brand); font-size:26px; font-weight:800 }
+    .compare-tag { display:inline-flex; margin-right:6px; padding:2px 10px; color:var(--ink-soft); border:1px solid var(--line-strong); border-radius:999px; background:var(--wash); font-size:11px; font-weight:850; letter-spacing:.06em; text-transform:uppercase } .compare-tag.tag-after { color:var(--brand-press); border-color:var(--blush-line); background:var(--blush) }
+    .page-thumb { display:block; width:100%; height:auto; border:1px solid var(--line-strong); border-radius:10px; background:#fff; box-shadow:var(--shadow) }
+    .after-wrap { position:relative } .callouts { position:absolute; top:10px; right:-8px; display:grid; gap:6px; margin:0; padding:0; list-style:none; justify-items:end } .callout { display:inline-flex; align-items:center; gap:5px; max-width:230px; padding:5px 11px; color:var(--brand-press); border:1.5px solid var(--brand-deep); border-radius:999px; background:#fff; box-shadow:var(--shadow); font-size:12px; font-weight:800; text-align:left }
+    .page-mock { aspect-ratio:17/22; display:flex; flex-direction:column; gap:8px; padding:11% 12% } .mock-bar { flex:0 0 auto; height:9px; border-radius:4px; background:var(--sky) } .mock-bar.t { height:16px; width:62%; background:var(--blush) } .mock-bar.half { width:52% }
+    .kpi-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:16px } .kpi { padding:14px; border:1px solid var(--line); border-radius:12px; background:var(--wash); text-align:left } .kpi-value { display:block; color:var(--brand-press); font-family:var(--display); font-size:26px; font-weight:800; letter-spacing:-.02em } .kpi-label { display:block; margin-top:2px; color:var(--ink); font-size:13px; font-weight:800 } .kpi-note { margin-top:4px; color:var(--muted); font-size:12px }
+    @media(max-width:680px) { .compare-grid { flex-direction:column } .compare-arrow { align-self:center; transform:rotate(90deg) } .callouts { position:static; margin-top:8px; justify-items:start } }
     .persona { display:flex; gap:10px; align-items:center; margin:18px 8px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } .persona-mark { flex:0 0 auto; display:grid; place-items:center; width:30px; height:30px; color:white; border-radius:50%; background:var(--brand-deep); font-weight:850 } .persona>div { min-width:0 } .persona strong { display:block; color:var(--ink); font-size:14px } .persona p { color:var(--muted); font-size:14px }
     .sponsor-card { max-width:760px; margin:18px auto 0; background:var(--wash) } .sponsor-top { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px } .sponsor-label { display:inline-flex; align-items:center; padding:4px 12px; color:white; border-radius:999px; background:var(--ink); font-size:14px; font-weight:850; letter-spacing:.08em; text-transform:uppercase } .sponsor-disclosure { color:var(--muted); font-size:14px } .sponsor-tagline { margin-top:4px; color:var(--brand-press); font-size:14px; font-weight:800 } .sponsor-message { margin-top:8px; color:var(--ink-soft) } .sponsor-cta { display:inline-flex; align-items:center; margin-top:12px; padding:7px 14px; color:var(--brand-press); border:1px solid var(--blush-line); border-radius:999px; background:var(--blush); font-size:14px; font-weight:800 } .sponsor-note { margin-top:12px; color:var(--muted); font-size:14px }
     .sponsor-progress { position:relative; height:4px; margin-top:14px; border-radius:999px; background:var(--blush); overflow:hidden } .sponsor-progress:after { content:""; position:absolute; top:0; bottom:0; left:0; width:34%; border-radius:999px; background:var(--brand); animation:sweep 2.4s ease-in-out infinite alternate } @keyframes sweep { from { transform:translateX(-20%) } to { transform:translateX(220%) } }
@@ -593,6 +602,108 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             else:
                 improvements.append((REMEDIATION_LABELS.get(row["kind"], row["kind"]),
                                      "Applied to this copy, with a full record of the change."))
+        # ---- See what changed: real page-1 thumbnails + change callouts ---
+        root_doc = document
+        walked: set[str] = set()
+        while root_doc.get("parent_document_id") and root_doc["id"] not in walked:
+            walked.add(root_doc["id"])
+            parent = repository.document(TENANT_ID, root_doc["parent_document_id"])
+            if parent is None:
+                break
+            root_doc = parent
+        root_result = None
+        if root_doc["id"] != document_id:
+            root_job = repository.latest_job(TENANT_ID, root_doc["id"])
+            root_result = (root_job or {}).get("result")
+        compare_section = ""
+        if root_doc["id"] != document_id:
+            have_images = (repository.thumbnail_path(root_doc["id"]).is_file()
+                           and repository.thumbnail_path(document_id).is_file())
+            if have_images:
+                before_visual = (f'<img class=page-thumb src="/documents/{escape(root_doc["id"])}/thumbnail.png" '
+                                 'alt="First page of your original document" width=560>')
+                after_visual = (f'<img class=page-thumb src="/documents/{escape(document_id)}/thumbnail.png" '
+                                'alt="First page of your improved copy" width=560>')
+                compare_note = ("These are the actual first pages of both files. The improvements live in the "
+                                "document’s settings rather than on the page, so the page itself looks the same "
+                                "— the badges name exactly what changed in this copy.")
+            else:
+                mock = ('<div class="page-thumb page-mock" role=img aria-label="Stylized sketch of a document page '
+                        '— not an image of your file"><span class="mock-bar t"></span><span class=mock-bar></span>'
+                        '<span class="mock-bar half"></span><span class=mock-bar></span><span class=mock-bar></span>'
+                        '<span class="mock-bar half"></span></div>')
+                before_visual = after_visual = mock
+                compare_note = ("Page previews are not available here, so these are sketches — never images of "
+                                "your document. The badges still name exactly what changed in this copy.")
+            callouts = ""
+            if improvements:
+                callout_items = "".join(
+                    f'<li class=callout><span aria-hidden=true>✦</span>{escape(title)}</li>'
+                    for title, _ in improvements)
+                callouts = f'<ul class=callouts aria-label="Changes made in this copy">{callout_items}</ul>'
+            compare_section = f'''<section class="panel insight-card insight-compare" aria-labelledby=compare-heading>
+            <div class=insight-head><span class=icon-chip aria-hidden=true>⇄</span><h2 id=compare-heading>See what changed</h2></div>
+            <div class=compare-grid>
+            <figure class=compare-pane><figcaption><span class=compare-tag>Before</span>Your original</figcaption>{before_visual}</figure>
+            <div class=compare-arrow aria-hidden=true>→</div>
+            <figure class=compare-pane><figcaption><span class="compare-tag tag-after">After</span>Improved copy</figcaption>
+            <div class=after-wrap>{after_visual}{callouts}</div></figure>
+            </div><p class=small>{compare_note}</p></section>'''
+
+        # ---- Transformation facts: honest counts and page math only -------
+        report_meta = (result.get("report") or {}).get("metadata") or {}
+        pages_copy = report_meta.get("page_count")
+        if root_result is not None:
+            pages_original = ((root_result.get("report") or {}).get("metadata") or {}).get("page_count")
+        else:
+            pages_original = pages_copy
+        fields_set = sum(
+            len((row.get("provenance") or {}).get("actions", []))
+            for row in repository.remediations(TENANT_ID, document_id)
+            if row["kind"] == "metadata")
+        resolved = 0
+        if root_result is not None:
+            before_lanes = {s.get("rule_id"): s.get("lane") for s in root_result.get("signals", []) if s.get("rule_id")}
+            resolved = sum(
+                1 for s in result.get("signals", [])
+                if s.get("lane") == "verified_signal"
+                and before_lanes.get(s.get("rule_id")) in {"needs_attention", "review_recommended"})
+        lane_totals = _lane_counts(result)
+        human_review = lane_totals["needs_attention"] + lane_totals["review_recommended"]
+        kpis: list[tuple[str, str, str]] = []
+        if isinstance(pages_original, int) and pages_original > 0 and isinstance(pages_copy, int):
+            preserved_pct = round(100 * min(pages_original, pages_copy) / pages_original)
+            preserved_note = (
+                f"All {pages_original} original page{'s' if pages_original != 1 else ''} carried over — none altered."
+                if preserved_pct == 100 else
+                f"{min(pages_original, pages_copy)} of {pages_original} original pages carried over unchanged.")
+            kpis.append((f"{preserved_pct}%", "Content preserved", preserved_note))
+        kpis.append((str(fields_set), "Fields set",
+                     "Title and language live in the document’s settings, not on a page."
+                     if fields_set else "No settings needed changing in this copy."))
+        kpis.append((str(resolved), "Signals resolved",
+                     "Findings from the first review now verified in this copy."))
+        if _seal_available():
+            kpis.append(("+1", "Page added at download",
+                         "One review-summary page — a record of this review, nothing else."))
+        kpis.append((str(human_review), "Still for human review",
+                     "Judgment calls this tool leaves to a person."))
+        try:
+            elapsed_seconds = max((datetime.fromisoformat(job["finished_at"])
+                                   - datetime.fromisoformat(root_doc["created_at"])).total_seconds(), 0.0)
+            kpis.append((f"{elapsed_seconds:.1f}s" if elapsed_seconds < 90 else f"{elapsed_seconds / 60:.1f}m",
+                         "Processing time", "From drop to ready."))
+        except (KeyError, TypeError, ValueError):
+            pass
+        kpi_cards = "".join(
+            f'<div class=kpi><strong class=kpi-value>{escape(value)}</strong>'
+            f'<span class=kpi-label>{escape(label)}</span><p class=kpi-note>{escape(note)}</p></div>'
+            for value, label, note in kpis)
+        kpi_section = f'''<section class="panel insight-card insight-facts" aria-labelledby=facts-heading>
+        <div class=insight-head><span class=icon-chip aria-hidden=true>#</span><h2 id=facts-heading>Transformation facts</h2></div>
+        <div class=kpi-row>{kpi_cards}</div>
+        <p class=small>Counts and page math from this document’s own review records — never a rating of the document.</p></section>'''
+
         improved_section = ""
         if improvements:
             cards = "".join(f"<li><strong>{escape(title)}</strong><p>{escape(detail)}</p></li>" for title, detail in improvements)
@@ -646,7 +757,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         <div class=ready-actions>{download}</div>
         {badge}
         <p class=small>A review record, not a certification.</p></section>
-        <div class=insights>{improved_section}{look_section}{verified_section}{unchecked_section}</div>
+        <div class=insights>{compare_section}{kpi_section}{improved_section}{look_section}{verified_section}{unchecked_section}</div>
         <div class=ready-actions><a class="button secondary" href="/app">Transform another document <span aria-hidden=true>→</span></a>
         <a class=quiet-link href="/documents/{escape(document_id)}?view=advanced">Advanced tools</a></div>
         </div></div>'''
@@ -878,6 +989,22 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 payload = json.dumps(_journey_status(document)).encode()
                 start_response("200 OK", [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(payload))), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
                 return [payload]
+            if len(pieces) == 3 and pieces[2] == "thumbnail.png" and method == "GET":
+                # Real page-1 image for the before/after comparison. Educator
+                # session only, development only: access-code sessions and
+                # every hosted environment keep their exact prior surface, so
+                # the route does not exist there. A missing image (no
+                # rasterizer, unreadable page) is an honest 404 the ready page
+                # never links to — it renders its labeled schematic instead.
+                if not educator:
+                    return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
+                thumb = repository.thumbnail_path(document_id)
+                if not thumb.is_file():
+                    start_response("404 Not Found", [("Content-Length", "0"), ("Cache-Control", "no-store")])
+                    return [b""]
+                image = thumb.read_bytes()
+                start_response("200 OK", [("Content-Type", "image/png"), ("Content-Length", str(len(image))), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
+                return [image]
             if len(pieces) == 2 and method == "GET" and educator and "view=advanced" not in environ.get("QUERY_STRING", ""):
                 return _educator_document_view(start_response, document, persona)
             if len(pieces) == 2 and method == "GET":

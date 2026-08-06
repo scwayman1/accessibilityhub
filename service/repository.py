@@ -93,6 +93,15 @@ class StagingRepository:
             raise KeyError("document not found")
         return (self.documents_dir / item["storage_key"]).read_bytes()
 
+    def thumbnail_path(self, document_id: str) -> Path:
+        """Deterministic location of a document's page-1 PNG thumbnail.
+
+        Lives next to the stored PDF bytes and is removed with the lineage.
+        The file may not exist (no rasterizer, unreadable page) — callers
+        check and fall back honestly.
+        """
+        return self.documents_dir / f"{document_id}.page1.png"
+
     def latest_child(self, tenant_id: str, document_id: str) -> dict[str, Any] | None:
         """Newest direct derived copy of a document, if one exists."""
         with self._connect() as db:
@@ -177,4 +186,5 @@ class StagingRepository:
             db.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", ids)
         for row in rows:
             (self.documents_dir / row["storage_key"]).unlink(missing_ok=True)
+            self.thumbnail_path(row["id"]).unlink(missing_ok=True)
         return len(ids)

@@ -18,6 +18,8 @@ export HUB_STAGING_ACCESS_CODE="${HUB_STAGING_ACCESS_CODE:-demo-$($PYTHON -c 'im
 export HUB_SESSION_SECRET="${HUB_SESSION_SECRET:-$($PYTHON -c 'import secrets; print(secrets.token_urlsafe(48))')}"
 export HUB_DATA_DIR="${HUB_DATA_DIR:-$PWD/.hub-staging}"
 
+"$PYTHON" -m service.toolchain
+echo
 echo "Accessibility Hub — local demo"
 echo "  URL:         http://127.0.0.1:${PORT}/login"
 echo "  Access code: ${HUB_STAGING_ACCESS_CODE}"

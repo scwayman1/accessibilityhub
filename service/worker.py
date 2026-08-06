@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import threading
 from pathlib import Path
@@ -15,6 +17,37 @@ from service.repository import StagingRepository
 # Rules the educator pipeline may resolve automatically — metadata only, ever.
 AUTO_FIX_RULES = frozenset({"PDF.METADATA.TITLE", "PDF.METADATA.LANGUAGE"})
 AUTO_FIX_LANGUAGE = "en-US"
+
+# Width of the page-1 thumbnails rendered for the before/after comparison.
+THUMBNAIL_WIDTH = 560
+
+
+def rasterize_page1_png(payload: bytes, width: int = THUMBNAIL_WIDTH) -> bytes | None:
+    """First page of a PDF as a PNG about ``width`` px wide, via pdftoppm.
+
+    Returns None — never raises — when pdftoppm is absent, times out, or the
+    document cannot be rasterized (encrypted, damaged). Callers fall back to
+    an honest schematic; the review flow itself never depends on this.
+    """
+    if not shutil.which("pdftoppm"):
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="hub-page1-") as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.pdf"
+            source.write_bytes(payload)
+            result = subprocess.run(
+                ["pdftoppm", "-png", "-f", "1", "-l", "1",
+                 "-scale-to-x", str(width), "-scale-to-y", "-1",
+                 str(source), str(root / "page")],
+                capture_output=True, timeout=30, check=False,
+            )
+            if result.returncode != 0:
+                return None
+            produced = sorted(root.glob("page*.png"))
+            return produced[0].read_bytes() if produced else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 _VERSION_PATTERN = re.compile(r"^(?P<base>.+)\.v(?P<version>\d+)$")
 
@@ -217,6 +250,7 @@ class AssessmentWorker:
                 raise RuntimeError("job document no longer exists")
             document = dict(row)
             payload = self.repository.document_bytes(document["tenant_id"], job["document_id"])
+            self._write_page1_thumbnail(document["id"], payload)
             with tempfile.TemporaryDirectory(prefix="hub-staging-assessment-") as temp_dir:
                 root = Path(temp_dir)
                 pdf = root / "synthetic.pdf"
@@ -231,6 +265,23 @@ class AssessmentWorker:
         except Exception as error:  # Do not leak parser diagnostics to browser clients.
             self.repository.finish_job(job["id"], error_code=f"assessment_failed:{type(error).__name__}")
         return True
+
+    def _write_page1_thumbnail(self, document_id: str, payload: bytes) -> None:
+        """Render and store the document's real page-1 PNG once, best-effort.
+
+        Purely additive local artifact next to the document record: nothing in
+        the review depends on it, and only the dev-only educator-gated route
+        ever serves it. Failures are silent by design.
+        """
+        try:
+            path = self.repository.thumbnail_path(document_id)
+            if path.exists():
+                return
+            image = rasterize_page1_png(payload)
+            if image:
+                path.write_bytes(image)
+        except Exception:
+            return
 
     def _apply_pipeline_improvement(self, document: dict[str, Any], payload: bytes, result: dict[str, Any]) -> None:
         """Auto-apply ONLY the title/language metadata fix, on a copy, with full
