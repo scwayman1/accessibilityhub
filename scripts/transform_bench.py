@@ -27,6 +27,7 @@ determination: the bench reports technical evidence and review routing only.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import html
 import json
@@ -49,6 +50,7 @@ from service.worker import (  # noqa: E402  — the worker's own gates and mappi
     LANE_ORDER,
     normalize_report,
     pipeline_title,
+    rasterize_page1_png,
 )
 from tina.remedy import MetadataRemediation, RemediationError  # noqa: E402
 from tina.seal import append_review_summary  # noqa: E402
@@ -89,6 +91,35 @@ def _safe_output_name(filename: str) -> str:
     return f"{stem}.ready.pdf"
 
 
+def _page1_data_uri(payload: bytes) -> str | None:
+    """Real page-1 PNG as a data URI, or None when pdftoppm cannot render it."""
+    image = rasterize_page1_png(payload)
+    if not image:
+        return None
+    return "data:image/png;base64," + base64.b64encode(image).decode("ascii")
+
+
+def _kpi_facts(before: dict[str, Any], after: dict[str, Any],
+               pages_before: Any, pages_improved: Any, applied: list[str]) -> dict[str, Any]:
+    """Honest transformation facts computed from the two reports — counts and
+    page math only, never a rating of the document."""
+    before_open = {s.get("rule_id") for s in before.get("signals", [])
+                   if s.get("lane") in {"needs_attention", "review_recommended"} and s.get("rule_id")}
+    resolved = sum(1 for s in after.get("signals", [])
+                   if s.get("lane") == "verified_signal" and s.get("rule_id") in before_open)
+    after_counts = _lane_counts(after)
+    preserved_pct = None
+    if isinstance(pages_before, int) and pages_before > 0 and isinstance(pages_improved, int):
+        preserved_pct = round(100 * min(pages_before, pages_improved) / pages_before)
+    return {
+        "fields_set": len(applied),
+        "signals_resolved": resolved,
+        "content_preserved_pct": preserved_pct,
+        "pages_added": 1,  # the appended review-summary page
+        "human_review": after_counts["needs_attention"] + after_counts["review_recommended"],
+    }
+
+
 def run_document(path: Path, out_dir: Path) -> dict[str, Any]:
     """One document through assess → improve → re-assess → seal. Never raises."""
     record: dict[str, Any] = {
@@ -97,6 +128,7 @@ def run_document(path: Path, out_dir: Path) -> dict[str, Any]:
         "lanes_before": None, "lanes_after": None,
         "applied": [], "narration": [], "decline_reason": None,
         "output": None, "elapsed_ms": None,
+        "kpis": None, "page1_before": None, "page1_after": None,
     }
     started = time.perf_counter()
     try:
@@ -145,6 +177,11 @@ def run_document(path: Path, out_dir: Path) -> dict[str, Any]:
 
         after_report, after = _assess(improved, path.name)
         record["lanes_after"] = _lane_counts(after)
+        record["page1_before"] = _page1_data_uri(payload)
+        record["page1_after"] = _page1_data_uri(improved)
+        record["kpis"] = _kpi_facts(
+            before, after, record["pages_before"],
+            after_report.get("metadata", {}).get("page_count"), record["applied"])
 
         summary = {
             "lanes": record["lanes_after"],
@@ -243,6 +280,38 @@ def render_html(records: list[dict[str, Any]], corpus_label: str, when: str) -> 
             pages = f'{r["pages_before"]} pages'
         narration = "".join(f"<li>{html.escape(item)}</li>" for item in r["narration"]) or \
             "<li>No changes were made to this document.</li>"
+        page_images = ""
+        if r.get("page1_before") or r.get("page1_after"):
+            callouts = "".join(f'<span class="callout">{html.escape(item)}</span>'
+                               for item in r["applied"])
+            callout_block = f'<div class="callouts">{callouts}</div>' if callouts else ""
+            missing = '<p class="mutetext">page not rendered</p>'
+            before_img = (f'<img src="{r["page1_before"]}" alt="First page of the original document">'
+                          if r.get("page1_before") else missing)
+            after_img = (f'<img src="{r["page1_after"]}" alt="First page of the improved copy">'
+                         if r.get("page1_after") else missing)
+            page_images = f"""
+        <div class="pages">
+          <figure><figcaption>Before — first page, original</figcaption>{before_img}</figure>
+          <figure><figcaption>After — first page, improved copy</figcaption>{after_img}{callout_block}</figure>
+        </div>"""
+        kpi_row = ""
+        if r.get("kpis"):
+            k = r["kpis"]
+            preserved = f'{k["content_preserved_pct"]}%' if k["content_preserved_pct"] is not None else "—"
+            facts = (
+                (preserved, "content preserved"),
+                (str(k["fields_set"]), "fields set"),
+                (str(k["signals_resolved"]), "signals resolved"),
+                (f'+{k["pages_added"]}', "review-record page"),
+                (str(k["human_review"]), "still for human review"),
+                (f'{r["elapsed_ms"]} ms', "pipeline time"),
+            )
+            cells = "".join(f'<div class="kpi"><strong>{html.escape(value)}</strong>'
+                            f'<span>{html.escape(label)}</span></div>'
+                            for value, label in facts)
+            kpi_row = (f'<h3>Transformation facts</h3><div class="kpis">{cells}</div>'
+                       '<p class="meta">Counts and page math from the two reviews — never a rating of the document.</p>')
         reason = (f'<p class="reason">{html.escape(r["decline_reason"])}</p>'
                   if r["decline_reason"] else "")
         link = (f'<a class="ready" href="{html.escape(r["output"])}">{html.escape(r["output"])}</a>'
@@ -257,7 +326,7 @@ def render_html(records: list[dict[str, Any]], corpus_label: str, when: str) -> 
           <div><h3>Before</h3>{_chips(r['lanes_before'])}</div>
           <div class="arrow" aria-hidden="true">→</div>
           <div><h3>After</h3>{_chips(r['lanes_after'])}</div>
-        </div>
+        </div>{page_images}{kpi_row}
         <h3>What changed</h3>
         <ul class="narration">{narration}</ul>
         {reason}
@@ -303,6 +372,19 @@ def render_html(records: list[dict[str, Any]], corpus_label: str, when: str) -> 
   .chip.needs_attention {{ border-color:var(--brand); color:var(--brand-press) }}
   .chip.verified_signal {{ border-color:#BFDCCB; color:var(--good); background:#F1F8F3 }}
   .chip.zero {{ opacity:.45 }} .chip.mute {{ color:var(--muted) }}
+  .pages {{ display:flex; gap:18px; flex-wrap:wrap; margin-top:14px }}
+  .pages figure {{ flex:1 1 240px; min-width:0; margin:0; position:relative }}
+  .pages figcaption {{ font-size:12.5px; color:var(--muted); font-weight:600; margin-bottom:6px }}
+  .pages img {{ display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:8px; background:#fff }}
+  .callouts {{ position:absolute; top:28px; right:-6px; display:grid; gap:6px; justify-items:end }}
+  .callout {{ display:inline-block; max-width:240px; font-size:12px; font-weight:700; color:var(--brand-press);
+             background:#fff; border:1.5px solid var(--brand); border-radius:999px; padding:4px 10px;
+             box-shadow:0 2px 8px rgba(35,42,51,.10) }}
+  .kpis {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-top:6px }}
+  .kpi {{ border:1px solid var(--line); border-radius:8px; background:var(--cream); padding:10px 12px }}
+  .kpi strong {{ display:block; font-size:20px; color:var(--brand-press) }}
+  .kpi span {{ font-size:12px; color:var(--muted) }}
+  @media (max-width:560px) {{ .pages {{ flex-direction:column }} .callouts {{ position:static; margin-top:6px; justify-items:start }} }}
   .narration {{ margin:4px 0 0; padding-left:20px; font-size:14.5px }}
   .reason {{ font-size:14.5px; color:var(--muted); border-left:3px solid var(--line); padding-left:12px }}
   .meta {{ font-size:13.5px; color:var(--muted); margin:8px 0 0 }}

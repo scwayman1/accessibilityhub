@@ -108,7 +108,7 @@ class QpdfLiveWiringTests(unittest.TestCase):
         toolchain_versions.cache_clear()
         versions = toolchain_versions()
         self.assertIsNotNone(versions["qpdf"])
-        self.assertEqual(set(versions), {"qpdf", "tesseract", "verapdf"})
+        self.assertEqual(set(versions), {"qpdf", "tesseract", "pdftoppm", "verapdf"})
 
 
 class BenchEndToEndTests(unittest.TestCase):
@@ -187,6 +187,61 @@ class BenchEndToEndTests(unittest.TestCase):
             self.assertNotIn(extra, report)
         self.assertIn("a review record, not a certification", report)
         self.assertIn("verapdf", report)  # tool status strip is present and honest
+
+    def test_kpi_facts_are_computed_from_the_two_reviews(self):
+        doc = self.by_name["missing-title-language.pdf"]
+        facts = doc["kpis"]
+        self.assertIsNotNone(facts)
+        self.assertEqual(facts["fields_set"], len(doc["applied"]))
+        # Content preserved is page math, never a typed-in number: every
+        # original page carried into the improved copy before sealing.
+        self.assertEqual(facts["content_preserved_pct"], 100)
+        self.assertEqual(facts["pages_added"], 1)
+        self.assertEqual(doc["pages_after"], doc["pages_before"] + facts["pages_added"])
+        self.assertGreaterEqual(facts["signals_resolved"], 2)  # title + language verified
+        self.assertEqual(facts["human_review"],
+                         doc["lanes_after"]["needs_attention"] + doc["lanes_after"]["review_recommended"])
+        # A document the pipeline could not read has no facts to state.
+        self.assertIsNone(self.by_name["encrypted.pdf"]["kpis"])
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed in this environment")
+    def test_html_report_carries_side_by_side_page_images_and_kpi_row(self):
+        doc = self.by_name["missing-title-language.pdf"]
+        for key in ("page1_before", "page1_after"):
+            self.assertTrue(str(doc[key]).startswith("data:image/png;base64,"), key)
+        # Render from the run's own records (another test re-runs the bench
+        # into the shared out dir, so the file on disk is not stable here).
+        report = bench_module.render_html(self.payload["documents"], "corpus", "now")
+        self.assertIn("data:image/png;base64,", report)
+        self.assertIn("First page of the original document", report)
+        self.assertIn("First page of the improved copy", report)
+        self.assertIn("Transformation facts", report)
+        for label in ("content preserved", "fields set", "signals resolved",
+                      "review-record page", "still for human review"):
+            self.assertIn(label, report)
+        # The callout badges mirror the applied provenance labels exactly.
+        import html as html_module
+        for applied in doc["applied"]:
+            self.assertIn(f'<span class="callout">{html_module.escape(applied)}</span>', report)
+        self.assertIn("never a rating of the document", report)
+
+    def test_report_renders_gracefully_without_the_rasterizer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "out"
+            stdout = io.StringIO()
+            with mock.patch.object(bench_module, "rasterize_page1_png", return_value=None):
+                with contextlib.redirect_stdout(stdout):
+                    code = bench_module.main([str(self.corpus_dir / "clean-well-formed.pdf"),
+                                              "--out", str(out), "--json"])
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            doc = payload["documents"][0]
+            self.assertIsNone(doc["page1_before"])
+            self.assertIsNone(doc["page1_after"])
+            self.assertIsNotNone(doc["kpis"])  # facts never depended on images
+            report = (out / "bench-report.html").read_text(encoding="utf-8")
+            self.assertNotIn("data:image/png", report)
+            self.assertIn("Transformation facts", report)
 
     def test_console_table_mode_also_exits_zero(self):
         stdout = io.StringIO()

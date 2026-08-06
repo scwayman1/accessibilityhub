@@ -51,6 +51,9 @@ def toolchain_versions() -> dict[str, str | None]:
     return {
         "qpdf": _first_line(["qpdf", "--version"]),
         "tesseract": _first_line(["tesseract", "--version"]),
+        # poppler-utils page rasterizer: powers the real before/after page-1
+        # thumbnails. Absent, those surfaces fall back to an honest schematic.
+        "pdftoppm": _first_line(["pdftoppm", "-v"]),
         "verapdf": verapdf,
     }
 
@@ -69,6 +72,8 @@ def status_lines() -> list[str]:
     for name in ("qpdf", "tesseract"):
         version = versions[name]
         lines.append(f"  {name:<10} {version if version else 'not detected — its checks are disclosed as not run'}")
+    pdftoppm = versions["pdftoppm"]
+    lines.append(f"  {'pdftoppm':<10} {pdftoppm if pdftoppm else 'not detected — page thumbnails fall back to a labeled schematic'}")
     if versions["verapdf"]:
         lines.append(f"  {'veraPDF':<10} {versions['verapdf']}")
     else:

@@ -221,7 +221,7 @@ class StagingServiceTests(unittest.TestCase):
         # Read-only toolchain visibility: every tool name maps to a version
         # string or null (absent). No behavior key hides in here.
         self.assertIn("toolchain", payload)
-        self.assertEqual(set(payload["toolchain"]), {"qpdf", "tesseract", "verapdf"})
+        self.assertEqual(set(payload["toolchain"]), {"qpdf", "tesseract", "pdftoppm", "verapdf"})
         for value in payload["toolchain"].values():
             self.assertTrue(value is None or isinstance(value, str))
 
@@ -1448,6 +1448,11 @@ class StagingServiceTests(unittest.TestCase):
             hosted_doc = headers["Location"].rsplit("/", 1)[-1]
             status, _, _ = self.request(f"/documents/{hosted_doc}/status.json")
             self.assertTrue(status.startswith("404"), status)
+            # The thumbnail route does not exist hosted either, even though the
+            # worker may have stored a PNG next to the record — boundary intact.
+            status, _, body = self.request(f"/documents/{hosted_doc}/thumbnail.png")
+            self.assertTrue(status.startswith("404"), status)
+            self.assertFalse(body.startswith(b"\x89PNG"))
             # Hosted environments serve no script assets at all: the journey
             # file is a development-only route, so the hosted surface gains
             # zero new endpoints.
@@ -1457,6 +1462,149 @@ class StagingServiceTests(unittest.TestCase):
             worker.stop()
             self.app = create_app(self.settings, self.repository, self.worker)
             self.cookie = ""
+
+    # ------------------------------------------------------------------
+    # The before/after comparison: pipeline-side page-1 thumbnails, the
+    # educator-gated image route, the See-what-changed side-by-side with
+    # provenance-driven callouts, the Transformation-facts row, and the
+    # honest schematic fallback when no rasterizer exists.
+    # ------------------------------------------------------------------
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed in this environment")
+    def test_pipeline_renders_page_thumbnails_and_route_is_educator_gated(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        self.assertNotEqual(final_id, document_id)
+        # The pipeline stored a real page-1 PNG next to both document records.
+        for doc_id in (document_id, final_id):
+            thumb = self.repository.thumbnail_path(doc_id)
+            self.assertTrue(thumb.is_file(), doc_id)
+            self.assertTrue(thumb.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), doc_id)
+        # The educator session gets the image with the private-cache headers.
+        status, headers, image = self.request(f"/documents/{final_id}/thumbnail.png")
+        self.assertTrue(status.startswith("200"), status)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertTrue(image.startswith(b"\x89PNG\r\n\x1a\n"))
+        # No session: the login wall intercepts before the route exists.
+        status, headers, _ = self.request(f"/documents/{final_id}/thumbnail.png", cookie="none=1")
+        self.assertTrue(status.startswith("303"), status)
+        self.assertEqual(headers["Location"], "/login")
+        # An access-code session never sees the route: it does not exist.
+        self.login()
+        status, _, body = self.request(f"/documents/{final_id}/thumbnail.png")
+        self.assertTrue(status.startswith("404"), status)
+        self.assertFalse(body.startswith(b"\x89PNG"))
+        # Lineage removal takes the image files with it.
+        self.request(f"/documents/{document_id}/delete", "POST", {"confirmed": "yes"})
+        for doc_id in (document_id, final_id):
+            self.assertFalse(self.repository.thumbnail_path(doc_id).is_file(), doc_id)
+        self.cookie = ""
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "pdftoppm is not installed in this environment")
+    def test_ready_page_shows_side_by_side_comparison_with_provenance_callouts(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        status, _, page = self.request(f"/documents/{final_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"See what changed", page)
+        # Real page images, original on the before side, copy on the after side.
+        self.assertIn(f'src="/documents/{document_id}/thumbnail.png"'.encode(), page)
+        self.assertIn(f'src="/documents/{final_id}/thumbnail.png"'.encode(), page)
+        self.assertIn(b'alt="First page of your original document"', page)
+        self.assertIn(b'alt="First page of your improved copy"', page)
+        self.assertLess(page.index(document_id.encode() + b"/thumbnail.png"),
+                        page.index(final_id.encode() + b"/thumbnail.png"))
+        # Callouts are driven by the recorded provenance: one badge per
+        # improvement, with the exact same titles as the improved list.
+        callouts = re.search(rb'<ul class=callouts[^>]*>(.*?)</ul>', page, re.S)
+        self.assertIsNotNone(callouts)
+        badges = callouts.group(1).count(b"<li class=callout")
+        provenance = self.repository.remediations("coastline-staging", final_id)
+        actions = [a for row in provenance if row["kind"] == "metadata"
+                   for a in row["provenance"]["actions"]]
+        self.assertEqual(badges, len(actions))
+        self.assertIn(b"Title added", callouts.group(1))
+        self.assertIn(b"Language set to English (US)", callouts.group(1))
+        # Real images present means no schematic mock element on this page.
+        self.assertNotIn(b'<div class="page-thumb page-mock"', page)
+        self.assert_scrubbed(page, "ready (comparison)")
+        self.cookie = ""
+
+    def test_ready_page_kpi_row_matches_the_reports_math(self):
+        from service.fixtures import synthetic_handout_pdf
+        self.login_sso()
+        _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+        document_id = headers["Location"].rsplit("/", 1)[-1]
+        final_id = self.wait_for_pipeline(document_id)
+        before = self.repository.latest_job("coastline-staging", document_id)["result"]
+        after = self.repository.latest_job("coastline-staging", final_id)["result"]
+        pages_original = before["report"]["metadata"]["page_count"]
+        pages_copy = after["report"]["metadata"]["page_count"]
+        expected_pct = round(100 * min(pages_original, pages_copy) / pages_original)
+        fields_set = sum(len(row["provenance"]["actions"])
+                         for row in self.repository.remediations("coastline-staging", final_id)
+                         if row["kind"] == "metadata")
+        open_before = {s["rule_id"]: s["lane"] for s in before["signals"] if s.get("rule_id")}
+        resolved = sum(1 for s in after["signals"]
+                       if s["lane"] == "verified_signal"
+                       and open_before.get(s.get("rule_id")) in {"needs_attention", "review_recommended"})
+        human_review = sum(1 for s in after["signals"]
+                           if s["lane"] in {"needs_attention", "review_recommended"})
+        self.assertGreater(fields_set, 0)
+        self.assertGreater(resolved, 0)
+        _, _, page = self.request(f"/documents/{final_id}")
+        self.assertIn(b"Transformation facts", page)
+        # Every fact is computed from this document's own records, not typed in.
+        self.assertIn(f"<strong class=kpi-value>{expected_pct}%</strong><span class=kpi-label>Content preserved</span>".encode(), page)
+        self.assertIn(f"<strong class=kpi-value>{fields_set}</strong><span class=kpi-label>Fields set</span>".encode(), page)
+        self.assertIn(f"<strong class=kpi-value>{resolved}</strong><span class=kpi-label>Signals resolved</span>".encode(), page)
+        self.assertIn(f"<strong class=kpi-value>{human_review}</strong><span class=kpi-label>Still for human review</span>".encode(), page)
+        self.assertIn(b"<strong class=kpi-value>+1</strong><span class=kpi-label>Page added at download</span>", page)
+        self.assertIn(b"Processing time", page)
+        # Claim boundary: facts only, never a rating, never an overall result.
+        text = visible_text(page)
+        self.assertIn("never a rating of the document", text)
+        for banned in ("score", "grade", "% accessible", "percent accessible"):
+            self.assertNotIn(banned, text)
+        self.assert_scrubbed(page, "ready (facts)")
+        self.cookie = ""
+
+    def test_ready_page_falls_back_to_schematic_when_rasterizer_is_missing(self):
+        from unittest import mock
+        import service.worker as worker_module
+        from service.fixtures import synthetic_handout_pdf
+        with mock.patch.object(worker_module, "rasterize_page1_png", return_value=None):
+            self.login_sso()
+            _, headers, _ = self._upload("week 5-handout.pdf", synthetic_handout_pdf())
+            document_id = headers["Location"].rsplit("/", 1)[-1]
+            final_id = self.wait_for_pipeline(document_id)
+        # No PNG was produced, so the flow renders the labeled schematic —
+        # never a broken image, never a fake screenshot.
+        self.assertFalse(self.repository.thumbnail_path(document_id).is_file())
+        self.assertFalse(self.repository.thumbnail_path(final_id).is_file())
+        status, _, page = self.request(f"/documents/{final_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"See what changed", page)
+        self.assertIn(b'<div class="page-thumb page-mock"', page)
+        self.assertIn(b"Stylized sketch of a document page", page)
+        self.assertIn(b"never images of", page)
+        self.assertNotIn(b"thumbnail.png", page)
+        # The facts row still renders — it never depended on the images.
+        self.assertIn(b"Transformation facts", page)
+        # The image route answers an honest empty 404, not an error page.
+        status, _, body = self.request(f"/documents/{final_id}/thumbnail.png")
+        self.assertTrue(status.startswith("404"), status)
+        self.assertEqual(body, b"")
+        self.assert_scrubbed(page, "ready (schematic fallback)")
+        self.cookie = ""
 
     def test_new_educator_text_ground_pairs_meet_contrast_contract(self):
         from tests.test_design_contract import contrast_ratio
