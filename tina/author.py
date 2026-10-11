@@ -69,6 +69,28 @@ def _esc(value: Any) -> str:
     return html.escape(" ".join(str(value or "").split()))
 
 
+def _text_with_links(text: str, links: list[dict[str, Any]] | None) -> str:
+    """Escape ``text`` and wrap the first non-overlapping occurrence of each link's text."""
+    text = " ".join(str(text or "").split())
+    spans: list[tuple[int, int, str]] = []
+    for link in sorted(links or [], key=lambda item: -len(str(item.get("text") or ""))):
+        needle = " ".join(str(link.get("text") or "").split())
+        if not needle:
+            continue
+        start = text.find(needle)
+        while start != -1 and any(start < end and start + len(needle) > begin for begin, end, _ in spans):
+            start = text.find(needle, start + 1)
+        if start != -1:
+            spans.append((start, start + len(needle), str(link.get("href") or "")))
+    out, cursor = [], 0
+    for begin, end, href in sorted(spans):
+        out.append(html.escape(text[cursor:begin]))
+        out.append(f'<a href="{html.escape(href, quote=True)}">{html.escape(text[begin:end])}</a>')
+        cursor = end
+    out.append(html.escape(text[cursor:]))
+    return "".join(out)
+
+
 def _figure_html(block: dict[str, Any], target: str) -> str:
     source = f"data:{block['mime']};base64,{block['base64']}"
     caption = f"<figcaption>{_esc(block['caption'])}</figcaption>" if block.get("caption") else ""
@@ -122,7 +144,7 @@ def render_html(model: dict[str, Any], summary: dict[str, Any] | None = None, ta
         if kind == "heading":
             body.append(f"<h{block['level']}>{_esc(block['text'])}</h{block['level']}>")
         elif kind == "paragraph":
-            body.append(f"<p>{_esc(block['text'])}</p>")
+            body.append(f"<p>{_text_with_links(block['text'], block.get('links'))}</p>")
         elif kind == "notice":
             body.append(f'<p class="notice">{_esc(block["text"])}</p>')
         elif kind == "list":

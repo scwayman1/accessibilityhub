@@ -418,3 +418,46 @@ class BenchProduceTests(unittest.TestCase):
             self.assertEqual(produced["figures"], 1)
             self.assertTrue((Path(directory) / "outline.bench.accessible.pdf").is_file())
             self.assertTrue((Path(directory) / "outline.bench.accessible.html").is_file())
+
+
+class LinkTests(unittest.TestCase):
+    def test_link_annotations_attach_to_the_paragraph_under_them(self):
+        from tests.test_report_anchors import anchored_pdf
+
+        model = build_docmodel(anchored_pdf(), title="Syllabus", language="en-US")
+        paragraph = next(b for b in model["blocks"] if b.get("links"))
+        self.assertEqual(paragraph["text"], "A chart appears below.")
+        self.assertEqual(paragraph["links"][0]["href"], "https://example.edu/reading")
+        self.assertTrue(paragraph["text"].startswith(paragraph["links"][0]["text"]))
+
+    def test_addresses_written_in_text_become_links(self):
+        model = build_docmodel(text_pdf("Readings at https://example.edu/week3 today"), title="T", language="en-US")
+        self.assertEqual(model["blocks"][0]["links"], [{"text": "https://example.edu/week3", "href": "https://example.edu/week3", "source": "text"}])
+
+    def test_unsafe_or_mismatched_links_are_rejected(self):
+        model = full_model()
+        model["blocks"][1]["links"] = [{"text": "chapter two", "href": "javascript:alert(1)"}]
+        self.assertTrue(any("web or email" in p for p in validate_docmodel(model)))
+        model["blocks"][1]["links"] = [{"text": "not in the text", "href": "https://example.edu"}]
+        self.assertTrue(any("text is not in the block" in p for p in validate_docmodel(model)))
+
+    def test_links_render_as_escaped_anchors(self):
+        from tina.author import _text_with_links, render_html
+
+        self.assertEqual(
+            _text_with_links('See <the> site & more', [{"text": "site", "href": "https://example.edu/?a=1&b=\"2\""}]),
+            'See &lt;the&gt; <a href="https://example.edu/?a=1&amp;b=&quot;2&quot;">site</a> &amp; more')
+        model = full_model()
+        model["blocks"][1]["links"] = [{"text": "chapter two", "href": "https://example.edu/ch2"}]
+        self.assertIn('Read <a href="https://example.edu/ch2">chapter two</a> before class.', render_html(model))
+
+    @unittest.skipUnless(HAVE_WEASYPRINT, "WeasyPrint is not installed")
+    def test_pdf_carries_a_tagged_link_annotation(self):
+        from tina.author import render_pdf
+
+        model = full_model()
+        model["blocks"][1]["links"] = [{"text": "chapter two", "href": "https://example.edu/ch2"}]
+        pdf = render_pdf(model)
+        annotations = [a.get_object() for page in PdfReader(io.BytesIO(pdf)).pages for a in page.get("/Annots", [])]
+        self.assertEqual([str(a["/A"]["/URI"]) for a in annotations if a.get("/Subtype") == "/Link"], ["https://example.edu/ch2"])
+        self.assertIn("/Link", [name for name, _ in struct_tags(pdf)])

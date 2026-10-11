@@ -598,6 +598,15 @@ def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str],
             "<p class=small>Confirm what each block is. Headings and lists you confirm become real structure in both copies.</p>"
             f"<input type=hidden name=block_count value={len(blocks[:MAX_FORM_BLOCKS])}>" + "".join(rows) + "</details>"
         )
+    carried = [(link.get("text"), link.get("href"), block.get("page")) for block in model.get("blocks", [])
+               for link in block.get("links") or []]
+    links_section = ""
+    if carried:
+        items = "".join(
+            f"<li><strong>{escape(str(text))}</strong> → <span class=mono>{escape(str(href))}</span> (page {escape(str(page))})</li>"
+            for text, href, page in carried[:60])
+        links_section = ("<h2>Links</h2><p>These links are carried into both copies. Check that each link's words "
+                         f"describe where it goes; fix wording in the source if not.</p><ul class=carried-links>{items}</ul>")
     pages = sorted({int(block.get("page") or 0) for block in model.get("blocks", []) if block.get("page")})[:MAX_PREVIEW_PAGES]
     page_previews = ""
     if pages:
@@ -620,6 +629,7 @@ def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str],
     <label for=accessible-title>Document title</label><input id=accessible-title name=title value="{escape(title_value)}" required>
     <label for=accessible-language>Primary language</label><input id=accessible-language name=language value="{escape(language_value)}" required>
     {figure_section}
+    {links_section}
     {structure}
     <div class=actions><button name=format value=html>Download accessible HTML <span aria-hidden=true>↓</span></button>
     <button name=format value=pdf class=secondary>Download tagged PDF <span aria-hidden=true>↓</span></button></div>

@@ -13,7 +13,8 @@ the staging service, and the evidence receipt unchanged.
       "source_sha256": "sha256:…",          # optional provenance
       "blocks": [
         {"kind": "heading", "level": 1, "text": "Syllabus"},
-        {"kind": "paragraph", "text": "…"},
+        {"kind": "paragraph", "text": "…",
+         "links": [{"text": "course site", "href": "https://…"}]},   # optional; text must appear in the block
         {"kind": "list", "ordered": false, "items": ["…", "…"]},
         {"kind": "table", "caption": "…", "header_rows": 1, "rows": [["Item", "Weight"], ["Essay", "40%"]]},
         {"kind": "figure", "mime": "image/png", "base64": "…", "page": 2,
@@ -35,6 +36,7 @@ FIGURE_MIMES = ("image/png", "image/jpeg")
 # BCP 47 shape check (language-region-variant), not a registry lookup.
 LANGUAGE_PATTERN = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 MAX_ALT_LENGTH = 1000
+LINK_SCHEMES = ("http://", "https://", "mailto:")
 
 
 class DocModelError(ValueError):
@@ -83,6 +85,13 @@ def validate_docmodel(model: Any) -> list[str]:
         kind = block["kind"]
         if kind in {"heading", "paragraph", "notice"} and not _text(block.get("text")):
             problems.append(f"{where} ({kind}) has no text.")
+        for link in block.get("links") or []:
+            href = str((link or {}).get("href") or "")
+            text = str((link or {}).get("text") or "")
+            if not href.lower().startswith(LINK_SCHEMES):
+                problems.append(f"{where} has a link that is not a web or email address.")
+            elif not text.strip() or text not in str(block.get("text") or ""):
+                problems.append(f"{where} has a link whose text is not in the block.")
         if kind == "heading" and block.get("level") not in (1, 2, 3, 4, 5, 6):
             problems.append(f"{where} heading level must be 1–6.")
         if kind == "list":
