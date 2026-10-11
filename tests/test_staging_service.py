@@ -383,6 +383,7 @@ class StagingServiceTests(unittest.TestCase):
         settings = ServiceSettings("staging", Path(self.temp.name) / "adv", "synthetic-only-code", "s" * 48, (), allow_hosted_synthetic=True)
         repository = StagingRepository(settings.data_dir)
         worker = AssessmentWorker(repository)
+        self.worker.stop()  # The setUp worker must not outlive its temp directory.
         self.app, self.repository, self.worker = create_app(settings, repository, worker), repository, worker
         return settings, repository, worker
 
@@ -450,6 +451,7 @@ class StagingServiceTests(unittest.TestCase):
         settings = ServiceSettings("staging", Path(self.temp.name) / "hygiene", secret_code, secret_session, (), allow_hosted_synthetic=True)
         repository = StagingRepository(settings.data_dir)
         worker = AssessmentWorker(repository)
+        self.worker.stop()  # The setUp worker must not outlive its temp directory.
         self.app, self.repository, self.worker = create_app(settings, repository, worker), repository, worker
         surfaces = [self.request("/healthz")[2], self.request("/login")[2]]
         status, headers, _ = self.request("/login", "POST", {"code": secret_code})
@@ -725,6 +727,7 @@ class StagingServiceTests(unittest.TestCase):
         )
         repository = StagingRepository(settings.data_dir)
         worker = AssessmentWorker(repository)
+        self.worker.stop()  # The setUp worker must not outlive its temp directory.
         self.app, self.repository, self.worker = create_app(settings, repository, worker), repository, worker
         return settings
 
@@ -1749,6 +1752,7 @@ class StagingServiceTests(unittest.TestCase):
         # Development access-code sessions keep the classic spinner surface.
         dev_repository = StagingRepository(Path(self.temp.name) / "dev-classic")
         dev_worker = AssessmentWorker(dev_repository)
+        self.worker.stop()  # The setUp worker must not outlive its temp directory.
         self.app, self.repository, self.worker = create_app(self.settings, dev_repository, dev_worker), dev_repository, dev_worker
         self.worker.stop()
         self.login()

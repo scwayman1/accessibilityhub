@@ -226,7 +226,7 @@ class AssessmentWorker:
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=10)
 
     def _run(self) -> None:
         while not self._stop.is_set():
