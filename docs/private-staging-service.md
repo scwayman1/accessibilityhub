@@ -87,7 +87,7 @@ after every Render deploy as well.
 
 `HUB_ALLOW_HOSTED_SYNTHETIC` is an environment variable and it is off by default. When `HUB_ENV=staging` **and** the value is exactly `true` (lowercase; `1`, `TRUE`, or `yes` do not count), the hosted web service allows the same bundled-synthetic-fixture intake that already runs in development:
 
-- optionally access-code gated when `HUB_PUBLIC_ACCESS` is unset; the checked-in public demo Blueprint sets it to exact `true`, exposing only this synthetic fixture experience;
+- access-code gated: the checked-in Blueprint sets `HUB_PUBLIC_ACCESS` to `"false"` for the pilot (only the exact value `true` reopens the synthetic-fixture demo without sign-in); sign-in attempts are rate limited, sign-out revokes the session server-side, and hosted responses carry HSTS;
 - still tenant-scoped — records live under the single staging tenant;
 - still audit-recorded — every create, remediation, and delete writes an append-only audit event;
 - still limited to the two fixtures generated in `service/fixtures.py`. The intake route accepts a fixture name, not a file.
@@ -111,7 +111,7 @@ after every Render deploy as well.
    - `HUB_ALLOW_HOSTED_SYNTHETIC` — the exact value `true`.
 4. Click **Apply** and wait for the first deploy to finish (service status **Live**).
 5. Open `https://<your-service>.onrender.com/healthz`. Confirm the JSON shows `"environment": "staging"`, `"login_ready": true`, `"hosted_synthetic_optin": true`, and — still — `"hosted_intake_enabled": false`.
-6. Open `https://<your-service>.onrender.com/`. With the checked-in `HUB_PUBLIC_ACCESS=true` value, no access code is requested; this does not expose any upload or real-intake route.
+6. Open `https://<your-service>.onrender.com/`. With the checked-in `HUB_PUBLIC_ACCESS="false"` value, the access code is requested first; set it to exact `true` only for a public demo. Neither setting exposes any upload or real-intake route.
 7. **Choose sample:** click **Start a sample review**. You land on a progress page that checks again every five seconds while the queued assessment runs.
 8. **Understand:** expect **Needs attention** on the document title and language, alongside the **Review recommended**, **Verified signal**, and **Not assessed** lanes. Each signal stands alone; there is no overall result.
 9. **Improve:** use **Fix the clearest issues**, keep or edit the suggested values, and click **Apply and recheck**. You are redirected to a new rechecked sample version.

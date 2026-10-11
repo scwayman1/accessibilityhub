@@ -45,7 +45,10 @@ def _docker_daemon_running() -> bool:
 @functools.lru_cache(maxsize=1)
 def toolchain_versions() -> dict[str, str | None]:
     """{tool: version-line-or-None} for the document toolchain, cached per process."""
-    verapdf = _first_line(["verapdf", "--version"])
+    from check_pdf import local_verapdf_command
+
+    local = local_verapdf_command()
+    verapdf = _first_line([local, "--version"]) if local else None
     if verapdf is None and _docker_daemon_running():
         verapdf = "containerized (pinned image via Docker)"
     return {
@@ -55,7 +58,16 @@ def toolchain_versions() -> dict[str, str | None]:
         # thumbnails. Absent, those surfaces fall back to an honest schematic.
         "pdftoppm": _first_line(["pdftoppm", "-v"]),
         "verapdf": verapdf,
+        # PdfCraft (storytold/pdfcraft): second-opinion checker, tagged-PDF
+        # semantics fixer, and page renderer. Built by scripts/build_pdfcraft.sh.
+        "pdfcraft": _pdfcraft_version(),
     }
+
+
+def _pdfcraft_version() -> str | None:
+    from tina.pdfcraft import version
+
+    return version()
 
 
 def verapdf_unavailable_reason() -> str | None:
@@ -74,6 +86,8 @@ def status_lines() -> list[str]:
         lines.append(f"  {name:<10} {version if version else 'not detected — its checks are disclosed as not run'}")
     pdftoppm = versions["pdftoppm"]
     lines.append(f"  {'pdftoppm':<10} {pdftoppm if pdftoppm else 'not detected — page thumbnails fall back to a labeled schematic'}")
+    pdfcraft = versions["pdfcraft"]
+    lines.append(f"  {'PdfCraft':<10} {pdfcraft if pdfcraft else 'not detected — its second-opinion check is disclosed as not run (scripts/build_pdfcraft.sh)'}")
     if versions["verapdf"]:
         lines.append(f"  {'veraPDF':<10} {versions['verapdf']}")
     else:

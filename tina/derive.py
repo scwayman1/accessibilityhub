@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import re
 from hashlib import sha256
 from typing import Any
 
@@ -215,6 +216,191 @@ def _extract_html_draft(input_data: dict[str, Any]) -> dict[str, Any]:
         "source_language": language or None,
         "source_sha256": f"sha256:{sha256(payload).hexdigest()}",
     }
+
+
+LINK_SCHEMES = ("http://", "https://", "mailto:")
+_BARE_URL = re.compile(r"(?:https?://|mailto:)[^\s<>()\[\]{}\"']+[^\s<>()\[\]{}\"'.,;:!?]")
+
+
+def _safe_href(value: Any) -> str | None:
+    href = str(value or "").strip()
+    return href if href.lower().startswith(LINK_SCHEMES) and len(href) <= 2000 else None
+
+
+def _page_link_annotations(page: Any) -> list[dict[str, Any]]:
+    """URI link annotations on a page, each with the words drawn under its rectangle.
+
+    Text under a link is found geometrically: text runs whose start point
+    falls inside the rectangle, trimmed word by word to the rectangle's width
+    with an average glyph width estimate. When that is not trustworthy the
+    caller falls back to the address itself.
+    """
+    annotations = []
+    for raw in page.get("/Annots", []) or []:
+        try:
+            annotation = raw.get_object()
+            if annotation.get("/Subtype") != "/Link":
+                continue
+            action = annotation.get("/A")
+            action = action.get_object() if action is not None else {}
+            href = _safe_href(action.get("/URI"))
+            rect = [float(v) for v in annotation.get("/Rect")]
+        except Exception:
+            continue
+        if not href:
+            continue
+        x0, y0, x1, y1 = min(rect[0], rect[2]), min(rect[1], rect[3]), max(rect[0], rect[2]), max(rect[1], rect[3])
+        annotations.append({"href": href, "rect": (x0, y0, x1, y1), "words": []})
+    if not annotations:
+        return []
+
+    def visit(text: str, cm: Any, tm: Any, font_dict: Any, font_size: Any) -> None:
+        if not text or not text.strip():
+            return
+        try:
+            x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+            y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
+            size = abs(float(font_size or 12) * (tm[0] or 1) * (cm[0] or 1)) or 12.0
+        except Exception:
+            return
+        for link in annotations:
+            lx0, ly0, lx1, ly1 = link["rect"]
+            if lx0 - 2 <= x <= lx1 and ly0 - 3 <= y <= ly1 + 3:
+                cursor = x
+                for word in text.split():
+                    width = 0.5 * size * len(word)
+                    if cursor + width > lx1 + 0.5 * size:
+                        break
+                    link["words"].append(word)
+                    cursor += width + 0.25 * size
+
+    try:
+        page.extract_text(visitor_text=visit)
+    except Exception:
+        pass
+    return [{"href": link["href"], "text": " ".join(link["words"]).strip()} for link in annotations]
+
+
+def _attach_links(blocks: list[dict[str, Any]], page_number: int, annotations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Inline each link into the paragraph that contains its text; return the leftovers."""
+    leftovers = []
+    page_paragraphs = [b for b in blocks if b.get("page") == page_number and b["kind"] == "paragraph"]
+    for link in annotations:
+        target = next((b for b in page_paragraphs if link["text"] and link["text"] in b["text"]), None)
+        if target is None:
+            leftovers.append(link)
+            continue
+        links = target.setdefault("links", [])
+        if not any(existing["href"] == link["href"] and existing["text"] == link["text"] for existing in links):
+            links.append({"text": link["text"], "href": link["href"], "source": "link_annotation"})
+    return leftovers
+
+
+def build_docmodel(
+    payload: bytes,
+    roles: dict[str, str] | None = None,
+    title: str | None = None,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """The structured document model (``tina/docmodel.py``) for a PDF.
+
+    Uses the same block order as the HTML draft, so the human-confirmed
+    ``roles`` index space (h1|h2|h3|p|li per block) is shared. Unconfirmed
+    blocks stay paragraphs, and every figure starts undecided: the model
+    records human structure and descriptions, it never infers them.
+    """
+    roles = {str(k): v for k, v in (roles or {}).items() if v in {"h1", "h2", "h3", "p", "li"}}
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception as error:
+        raise DerivationError(f"The PDF could not be parsed: {type(error).__name__}") from error
+    if reader.is_encrypted:
+        raise DerivationError("Encrypted PDFs are not converted; request an unencrypted source copy.")
+    info = reader.metadata or {}
+    root = reader.trailer.get("/Root", {})
+    try:
+        root = root.get_object()
+    except AttributeError:
+        pass
+    source_title = str(info.get("/Title") or "").strip()
+    source_language = str(root.get("/Lang") or "").strip()
+
+    blocks: list[dict[str, Any]] = []
+    block_index = 0
+    figure_number = 0
+    for page_number, page in enumerate(reader.pages, start=1):
+        page_start = len(blocks)
+        for paragraph in _page_paragraphs(page.extract_text() or ""):
+            role = roles.get(str(block_index), "p")
+            block_index += 1
+            if role == "li":
+                if blocks and blocks[-1]["kind"] == "list" and blocks[-1].get("page") == page_number:
+                    blocks[-1]["items"].append(paragraph)
+                else:
+                    blocks.append({"kind": "list", "ordered": False, "items": [paragraph], "page": page_number})
+            elif role in {"h1", "h2", "h3"}:
+                blocks.append({"kind": "heading", "level": int(role[1]), "text": paragraph, "page": page_number})
+            else:
+                blocks.append({"kind": "paragraph", "text": paragraph, "page": page_number})
+        # Addresses written out in the text become links to themselves.
+        for block in blocks[page_start:]:
+            if block["kind"] == "paragraph":
+                for match in _BARE_URL.finditer(block["text"]):
+                    block.setdefault("links", []).append({"text": match.group(0), "href": match.group(0), "source": "text"})
+        linked = {link["href"] for block in blocks[page_start:] for link in block.get("links", [])}
+        annotations = [link for link in _page_link_annotations(page) if link["href"] not in linked]
+        for link in _attach_links(blocks[page_start:], page_number, annotations):
+            blocks.append({
+                "kind": "paragraph", "page": page_number,
+                "text": f"Link on page {page_number}: {link['href']}",
+                "links": [{"text": link["href"], "href": link["href"], "source": "link_annotation"}],
+            })
+        try:
+            images = list(page.images)
+        except Exception:
+            images = []
+        for image in images:
+            mime = _detect_image(image.data or b"")
+            if mime is None:
+                blocks.append({
+                    "kind": "notice",
+                    "text": f"An image on page {page_number} could not be carried into this copy; review it in the original document.",
+                    "page": page_number,
+                })
+                continue
+            figure_number += 1
+            blocks.append({
+                "kind": "figure", "figure": figure_number, "page": page_number, "mime": mime,
+                "base64": base64.b64encode(image.data).decode("ascii"),
+                "alt": None, "decorative": False, "caption": None,
+            })
+    return {
+        "version": "tina-docmodel/v1",
+        "title": (title or "").strip() or source_title,
+        "language": (language or "").strip() or source_language,
+        "source_sha256": f"sha256:{sha256(payload).hexdigest()}",
+        "blocks": blocks,
+    }
+
+
+def scanned_pages(payload: bytes) -> list[int]:
+    """Pages with images but no extractable text: candidates for OCR before a rebuild."""
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception:
+        return []
+    if reader.is_encrypted:
+        return []
+    pages = []
+    for number, page in enumerate(reader.pages, start=1):
+        try:
+            has_text = bool((page.extract_text() or "").strip())
+            has_image = bool(list(page.images))
+        except Exception:
+            continue
+        if has_image and not has_text:
+            pages.append(number)
+    return pages
 
 
 def extract_images(payload: bytes, limit: int = 20) -> list[dict[str, Any]]:

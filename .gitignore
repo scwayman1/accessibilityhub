@@ -6,3 +6,5 @@ __pycache__/
 nohup.out
 corpus/
 bench-out/
+vendor-bin/
+.pdfcraft-src/

@@ -22,8 +22,15 @@ services:
       # hosted document creation closed. It never enables uploads or real intake.
       - key: HUB_ALLOW_HOSTED_SYNTHETIC
         sync: false
+      # Pilot hardening: the workspace requires sign-in. Only the exact value
+      # "true" would reopen it; keep it off for anything beyond a public demo.
       - key: HUB_PUBLIC_ACCESS
-        value: true
+        value: "false"
+      # Accessible HTML + tagged PDF downloads stay closed in hosted staging
+      # until the pilot opens them with the exact value "true". Producing PDFs
+      # also needs pango/fonts, which the Docker image (Dockerfile) provides.
+      - key: HUB_ENABLE_PRODUCE
+        sync: false
       - key: HUB_PRIVATE_OBJECT_STORAGE
         sync: false
       - key: HUB_MALWARE_SCAN_GATE

@@ -25,6 +25,7 @@ class ServiceSettings:
     hosted_controls: tuple[str, ...]
     allow_hosted_synthetic: bool = False
     public_access: bool = False
+    enable_produce: bool = False
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> "ServiceSettings":
@@ -42,11 +43,18 @@ class ServiceSettings:
             # else (unset, "1", "TRUE", "yes") keeps hosted intake closed.
             allow_hosted_synthetic=values.get("HUB_ALLOW_HOSTED_SYNTHETIC", "") == "true",
             public_access=values.get("HUB_PUBLIC_ACCESS", "") == "true",
+            # Producing downloadable copies stays off in hosted environments
+            # until the pilot opens it explicitly (exactly "true").
+            enable_produce=values.get("HUB_ENABLE_PRODUCE", "") == "true",
         )
 
     @property
     def login_ready(self) -> bool:
         return bool(self.access_code and self.session_secret and len(self.session_secret) >= 32)
+
+    @property
+    def produce_ready(self) -> bool:
+        return self.environment == "development" or self.enable_produce
 
     @property
     def hosted_boundary_ready(self) -> bool:

@@ -18,12 +18,15 @@ from urllib.parse import parse_qs
 from tina.remedy import MetadataRemediation, RemediationError
 from tina.ocr import OcrRemediation
 from tina.structure import StructureRemediation
-from tina.derive import extract_blocks
+from tina.derive import DerivationError, build_docmodel, extract_blocks, scanned_pages
+from tina.docmodel import DocModelError, apply_figure_decisions, validate_docmodel
 
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
+from service.hardening import RateLimiter, client_address, harden
 from service.repository import StagingRepository, now as repo_now
 from service.settings import ServiceSettings
-from service.worker import AssessmentWorker, LANE_ORDER, next_version_name as _next_version_name, split_version as _split_version
+from service.toolchain import toolchain_versions as _toolchain_versions
+from service.worker import AssessmentWorker, LANE_ORDER, rasterize_page_png, next_version_name as _next_version_name, split_version as _split_version
 
 TENANT_ID = "coastline-staging"
 ACTOR_ID = "staging-educator"
@@ -36,7 +39,7 @@ LANE_PRESENTATION = {
 }
 STATE_LABELS = {"queued": "Review queued", "running": "Review in progress", "succeeded": "Review complete", "failed": "Review did not complete"}
 SOURCE_LABELS = {"bundled_synthetic_fixture": "Supplied sample", "synthetic_remediated_copy": "Improved copy", "educator_upload": "Your upload"}
-REMEDIATION_LABELS = {"metadata": "Title & language", "structure": "Tag structure", "ocr": "Text layer (OCR)", "seal": "Review summary page"}
+REMEDIATION_LABELS = {"metadata": "Title & language", "structure": "Tag structure", "ocr": "Text layer (OCR)", "figures": "Image descriptions", "seal": "Review summary page"}
 SUMMARY_PHRASES = {"needs_attention": ("needs attention", "need attention"), "review_recommended": ("to review", "to review"), "verified_signal": ("verified", "verified"), "not_assessed": ("not assessed", "not assessed")}
 SSO_ACTOR = "jordan-rivera"
 SSO_DISPLAY = "Jordan Rivera, Faculty"
@@ -45,6 +48,10 @@ UPLOAD_READ_CAP = MAX_UPLOAD_BYTES + 2 * 1024 * 1024  # payload plus multipart f
 PARTNER_ADS_PATH = Path(__file__).resolve().parents[1] / "partner_ads.json"
 STRUCTURE_ROLES = (("h1", "Heading level 1"), ("h2", "Heading level 2"), ("h3", "Heading level 3"), ("p", "Paragraph"), ("li", "List item"))
 MAX_FORM_BLOCKS = 80
+# 20 hours: WCAG 2.2.1's twenty-hour exception, so a working day never hits a
+# silent sign-out mid-task. Sign-out still revokes the session server-side.
+SESSION_SECONDS = 20 * 60 * 60
+MAX_PREVIEW_PAGES = 12
 
 _FALLBACK_FAVICON = (
     b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
@@ -276,7 +283,7 @@ def _educator_shell(content: str, persona: str) -> str:
 
 def _html_page(title: str, body: str, head: str = "") -> bytes:
     css = """
-    :root { /* Brand tokens — swap hexes here to retune the brand */ --brand:#F0563F; --brand-deep:#CF3A24; --brand-press:#B0301C; --navy:#FFFFFF; --sky:#ECE9E6; --ink:#232A33; --ink-soft:#3A434E; --muted:#5C6670; --canvas:#FFFFFF; --wash:#FAFAF8; --surface:#fff; --line:#ECE9E6; --line-strong:#D9D4CF; --cream:#FFF6EE; --blush:#FFE3D6; --blush-line:#F3CDBB; --sun:#FFC94D; --teal:#0E7C66; --attention:#A83224; --attention-soft:#FBE2DC; --review:#0C6172; --review-soft:#DDF0F2; --success:#1D6E4C; --success-soft:#DFF2E6; --success-line:#B7DFC6; --neutral:#565E68; --neutral-soft:#ECEDEF; --display:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --shadow:0 8px 24px rgba(35,42,51,.06); }
+    :root { /* Brand tokens — swap hexes here to retune the brand */ --brand:#F0563F; --brand-deep:#CF3A24; --brand-press:#B0301C; --navy:#FFFFFF; --sky:#ECE9E6; --ink:#232A33; --ink-soft:#3A434E; --muted:#5C6670; --canvas:#FFFFFF; --wash:#FAFAF8; --surface:#fff; --line:#ECE9E6; --line-strong:#D9D4CF; --field:#857D75; --cream:#FFF6EE; --blush:#FFE3D6; --blush-line:#F3CDBB; --sun:#FFC94D; --teal:#0E7C66; --attention:#A83224; --attention-soft:#FBE2DC; --review:#0C6172; --review-soft:#DDF0F2; --success:#1D6E4C; --success-soft:#DFF2E6; --success-line:#B7DFC6; --neutral:#565E68; --neutral-soft:#ECEDEF; --display:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --shadow:0 8px 24px rgba(35,42,51,.06); }
     * { box-sizing:border-box } html { background:var(--canvas) } body { margin:0; color:var(--ink); background:var(--canvas); font:16px/1.55 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; } a { color:inherit } button,input,textarea,select { font:inherit } :focus-visible { outline:0; box-shadow:0 0 0 2px #fff,0 0 0 5px var(--brand-deep) } .skip-link { position:fixed; z-index:50; top:10px; left:10px; padding:10px 16px; color:white; background:var(--brand-deep); border-radius:999px; transform:translateY(-160%); } .skip-link:focus { transform:none; }
     h1,h2,h3 { margin:0; color:var(--ink); font-family:var(--display); letter-spacing:-.02em; overflow-wrap:anywhere } h1 { max-width:760px; font-size:clamp(32px,4vw,52px); line-height:1.05; font-weight:800 } h2 { font-size:24px; line-height:1.15; font-weight:800 } h3 { font-size:16px; line-height:1.25; font-weight:750 } p { margin:0; overflow-wrap:anywhere } .eyebrow { margin:0 0 8px; color:var(--brand-deep); font-size:11px; font-weight:850; letter-spacing:.14em; text-transform:uppercase; } .lead { max-width:690px; margin-top:14px; color:var(--muted); font-size:17px; } .small { color:var(--muted); font-size:12px; }
     header { background:var(--navy); color:var(--ink); border-bottom:3px solid var(--sky); } .shell { width:min(1240px,calc(100% - 48px)); margin:auto; } header nav { min-height:72px; display:flex; align-items:center; justify-content:space-between; gap:24px; } .brand-top { display:flex; align-items:center; gap:14px; text-decoration:none; } .brand-top img { display:block; width:188px; height:auto; filter:brightness(0) opacity(.85); } .nav-note { color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
@@ -291,8 +298,9 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .section-heading { display:flex; justify-content:space-between; gap:18px; align-items:end; margin:36px 0 14px } .section-heading h2 { font-size:21px } .queue { display:grid; gap:10px; min-width:0; margin:15px 0 0; padding:0; list-style:none } .queue li { min-width:0; padding:13px 16px; border:1px solid var(--line); border-radius:12px; background:white; box-shadow:var(--shadow) } .queue a { font-weight:800; text-decoration-color:var(--brand); text-decoration-thickness:2px; text-underline-offset:4px } .empty-state { color:var(--muted); border-style:dashed; text-align:center }
     .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:9px; color:var(--muted); font-size:12px } .tag { display:inline-flex; align-items:center; padding:4px 10px; color:var(--ink-soft); border:1px solid var(--line-strong); border-radius:999px; background:var(--wash); font-size:10px; font-weight:850; letter-spacing:.05em; text-transform:uppercase } .mono { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:0 }
     .document-layout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; align-items:start } .signal { display:grid; grid-template-columns:152px minmax(0,1fr); gap:18px; padding:20px 0; border-bottom:1px solid var(--line) } .signal:last-of-type { border-bottom:0 } .signal-heading { display:flex; align-items:center; gap:9px } .signal-icon { flex:0 0 auto; display:grid; place-items:center; width:25px; height:25px; border:1px solid currentColor; border-radius:50%; font-weight:900; line-height:1 } .chip { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; padding:5px 10px; border:1px solid currentColor; border-radius:999px; font-size:10px; font-weight:850; letter-spacing:.055em; line-height:1.1; text-transform:uppercase } .needs_attention .chip { background:var(--attention-soft) } .review_recommended .chip { background:var(--review-soft) } .verified_signal .chip { background:var(--success-soft) } .not_assessed .chip { background:var(--neutral-soft) } .needs_attention .chip,.needs_attention .signal-icon { color:var(--attention) } .review_recommended .chip,.review_recommended .signal-icon { color:var(--review) } .verified_signal .chip,.verified_signal .signal-icon { color:var(--success) } .not_assessed .chip,.not_assessed .signal-icon { color:var(--neutral) } .signal p { margin-top:5px; color:var(--muted); font-size:13px }
-    .fixlab { position:sticky; top:24px; padding:24px; border:1px solid var(--line); border-top:4px solid var(--brand); border-radius:16px; background:white; box-shadow:var(--shadow) } .fixlab h2 { font-size:22px } .fixlab p { margin-top:7px; color:var(--muted); font-size:13px } label { display:block; margin:15px 0 6px; color:var(--ink); font-size:13px; font-weight:760 } input,select { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--line-strong); border-radius:10px; background:white } input[type=checkbox] { width:auto; margin-right:7px } details { margin-top:12px; padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } summary { color:var(--ink); cursor:pointer; font-weight:760 } .advanced { margin-top:18px }
+    .fixlab { position:sticky; top:24px; padding:24px; border:1px solid var(--line); border-top:4px solid var(--brand); border-radius:16px; background:white; box-shadow:var(--shadow) } .fixlab h2 { font-size:22px } .fixlab p { margin-top:7px; color:var(--muted); font-size:13px } label { display:block; margin:15px 0 6px; color:var(--ink); font-size:13px; font-weight:760 } input,select,textarea { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--field); border-radius:10px; background:white } input[type=checkbox] { width:auto; margin-right:7px } details { margin-top:12px; padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } summary { color:var(--ink); cursor:pointer; font-weight:760 } .advanced { margin-top:18px }
     .completeness { border-style:dashed; background:var(--wash) } .completeness ul { margin:8px 0 0; padding-left:19px; color:var(--muted); font-size:12px } .completeness li { margin:4px 0 }
+    .figure-decision { margin:14px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:white } .figure-decision legend { font-weight:700; padding:0 6px } .figure-decision label { display:flex; align-items:center; gap:8px; margin:8px 0 4px } .figure-decision input[type=radio] { width:auto; min-height:0; margin:0; flex:none } .page-controls { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:10px; font-size:14px } .page-controls form { margin:0 } .page-controls button { min-height:36px; padding:0 14px; font-size:13px } .figure-decision textarea { width:100%; box-sizing:border-box; font:inherit; padding:8px; border:1px solid var(--field); border-radius:8px } .figure-preview { display:block; max-width:min(100%,360px); max-height:260px; margin:6px 0; border:1px solid var(--line); border-radius:8px } .page-previews figure { display:inline-block; margin:8px 10px 8px 0; vertical-align:top } .page-previews img { width:180px; height:auto; border:1px solid var(--line); border-radius:6px } .page-previews figcaption { font-size:12px; color:var(--muted) } #accessible-errors { border-left:4px solid var(--attention); padding:10px 14px; margin:14px 0; background:var(--attention-soft) }
     .block-row { margin:10px 0; padding:9px 11px; border:1px solid var(--line); border-radius:10px; background:white } .block-row label { margin:0 0 4px; font-size:11px; letter-spacing:.09em; text-transform:uppercase } .block-row select { min-height:36px; padding:6px 8px; font-size:13px } .block-preview { display:block; margin-top:5px; color:var(--muted); font-size:12px }
     .progress-card { max-width:760px; margin:34px auto; padding:38px; text-align:center } .progress-orb { position:relative; display:grid; place-items:center; width:72px; height:72px; margin:0 auto 20px; border:8px solid var(--blush); border-top-color:var(--brand); border-radius:50%; animation:spin 1.1s linear infinite } .progress-orb:after { content:""; width:26px; height:34px; border:2px solid var(--brand-deep); border-radius:6px; background:white } .progress-list { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:26px 0 0; padding:0; list-style:none; text-align:left } .progress-list li { padding:13px; color:var(--muted); border:1px solid var(--line); border-radius:12px; background:var(--wash); font-size:12px } .progress-list li strong { display:block; color:var(--ink); font-size:13px } .progress-list li.active { border-color:var(--blush-line); background:var(--blush) } .progress-list li.done { border-color:var(--success-line); background:var(--success-soft) } .progress-list li.done strong { color:var(--success) }
     .completion { display:flex; gap:14px; align-items:flex-start; margin-bottom:20px; padding:20px 22px; color:var(--success); border:1px solid var(--success-line); border-radius:16px; background:var(--success-soft) } .completion-mark { flex:0 0 auto; display:grid; place-items:center; width:36px; height:36px; color:white; border-radius:12px; background:var(--success); font-weight:900 } .completion h2 { color:var(--success); font-size:21px } .completion p { margin-top:4px; color:var(--success) }
@@ -378,7 +386,8 @@ def _simple_page(title: str, inner: str) -> bytes:
 
 
 def _session_token(settings: ServiceSettings, actor: str = ACTOR_ID, display: str = "") -> str:
-    session = {"actor": actor, "tenant": TENANT_ID, "exp": int(time.time()) + 28800}
+    # sid lets sign-out revoke this exact session on the server.
+    session = {"actor": actor, "tenant": TENANT_ID, "exp": int(time.time()) + SESSION_SECONDS, "sid": secrets.token_urlsafe(12)}
     if display:
         session["display"] = display
     payload = base64.urlsafe_b64encode(json.dumps(session).encode()).decode().rstrip("=")
@@ -485,6 +494,50 @@ def _structure_fix(document_id: str, blocks: list[str]) -> str:
     )
 
 
+def _tagged_figure_fix(document_id: str, source: bytes) -> str:
+    """Describe-or-decorative form for the figures of an already-tagged PDF.
+
+    The Hub's own structure tool declines tagged PDFs; PdfCraft can attach a
+    person's descriptions to their existing Figure elements. Absent PdfCraft,
+    an untagged PDF, or no figures, this renders nothing.
+    """
+    try:
+        from pypdf import PdfReader
+        import io as _io
+
+        if "/StructTreeRoot" not in PdfReader(_io.BytesIO(source), strict=False).trailer["/Root"]:
+            return ""
+        from tina.pdfcraft import PdfCraft
+
+        craft = PdfCraft.with_builtin_tools()
+        if not craft.available:
+            return ""
+        figures = craft.list_figures(source)[:MAX_FORM_BLOCKS]
+    except Exception:
+        return ""
+    if not figures:
+        return ""
+    rows = []
+    for figure in figures:
+        position = figure["position"]
+        current = str(figure.get("alt") or "")
+        rows.append(
+            f"<fieldset class=figure-decision><legend>Tagged image {position} (page {escape(str(figure.get('page')))})</legend>"
+            + (f"<p class=small>Current description: “{escape(current)}”</p>" if current else "<p class=small>No description yet.</p>")
+            + f"<label><input type=radio name=fig_{position}_choice value=keep checked> Keep as is</label>"
+            f"<label><input type=radio name=fig_{position}_choice value=describe> Describe it</label>"
+            f"<label for=tfig_{position}_alt>Description</label><textarea id=tfig_{position}_alt name=fig_{position}_alt rows=2 maxlength=1000></textarea>"
+            f"<label><input type=radio name=fig_{position}_choice value=decorative> It is decorative</label></fieldset>"
+        )
+    return (
+        "<details><summary>Describe images in this tagged PDF</summary>"
+        "<p class=small>This copy already has tags. Write what each image tells a reader, or mark it decorative; the change is applied to a new copy and rechecked.</p>"
+        f"<form method=post action=\"/documents/{escape(document_id)}/remediate/figures\">"
+        f"<input type=hidden name=figure_count value={len(figures)}>" + "".join(rows)
+        + "<div class=actions><button class=secondary>Apply descriptions and recheck</button></div></form></details>"
+    )
+
+
 def _guided_structure_roles(form: dict[str, str]) -> dict[str, str]:
     try:
         count = int(form.get("block_count", ""))
@@ -494,10 +547,220 @@ def _guided_structure_roles(form: dict[str, str]) -> dict[str, str]:
     return {str(index): form.get(f"role_{index}", "p") for index in range(count)}
 
 
+def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str], form: dict[str, str],
+                     problems: list[str], suggested_title: str, scans: list[int] | None = None,
+                     ocr_available: bool = False, ocr_requested: bool = False) -> str:
+    """The accessible-copy form: title, language, optional structure roles, and
+    one human decision per figure. Nothing is pre-described for the person."""
+    action = f"/documents/{escape(document_id)}/accessible"
+    error_list = ""
+    if problems:
+        items = "".join(f"<li>{escape(problem)}</li>" for problem in problems)
+        error_list = f'<div class=notice role=alert tabindex=-1 id=accessible-errors><h2>Before we can make your copies</h2><ul>{items}</ul></div>'
+    title_value = form.get("title") or model.get("title") or suggested_title
+    language_value = form.get("language") or model.get("language") or "en-US"
+    figures = [block for block in model.get("blocks", []) if block.get("kind") == "figure"]
+    figure_rows = []
+    for block in figures:
+        number = block["figure"]
+        choice = form.get(f"fig_{number}_choice", "describe")
+        alt_value = form.get(f"fig_{number}_alt", "")
+        figure_rows.append(
+            f'<fieldset class=figure-decision><legend>Image {number} (page {block.get("page")})</legend>'
+            f'<img src="/documents/{escape(document_id)}/figure/{number}" alt="Image {number} from page {block.get("page")} of the original, shown so you can describe it" class=figure-preview>'
+            f'<label><input type=radio name=fig_{number}_choice value=describe{" checked" if choice != "decorative" else ""}> It carries meaning — I will describe it</label>'
+            f'<label for=fig_{number}_alt>Description</label>'
+            f'<textarea id=fig_{number}_alt name=fig_{number}_alt rows=2 maxlength=1000>{escape(alt_value)}</textarea>'
+            f'<label><input type=radio name=fig_{number}_choice value=decorative{" checked" if choice == "decorative" else ""}> It is decorative — screen readers should skip it</label>'
+            "</fieldset>"
+        )
+    figure_section = (
+        "<h2>Images</h2><p>Describe what each image tells a reader, or mark it decorative. The tool never writes these for you.</p>"
+        + "".join(figure_rows)
+    ) if figure_rows else "<p class=small>This document has no images that need a decision.</p>"
+    structure = ""
+    if blocks:
+        rows = []
+        for index, text in enumerate(blocks[:MAX_FORM_BLOCKS]):
+            preview = text.strip()
+            if len(preview) > 90:
+                preview = preview[:90].rstrip() + "…"
+            selected_role = form.get(f"role_{index}", "h1" if index == 0 else "p")
+            options = "".join(
+                f"<option value={value}{' selected' if value == selected_role else ''}>{label}</option>"
+                for value, label in STRUCTURE_ROLES
+            )
+            rows.append(
+                f"<div class=block-row><label for=role_{index}>Block {index + 1}</label>"
+                f"<select id=role_{index} name=role_{index}>{options}</select>"
+                f"<span class=block-preview>{escape(preview)}</span></div>"
+            )
+        structure = (
+            "<details><summary>Headings and lists (optional)</summary>"
+            "<p class=small>Confirm what each block is. Headings and lists you confirm become real structure in both copies.</p>"
+            f"<input type=hidden name=block_count value={len(blocks[:MAX_FORM_BLOCKS])}>" + "".join(rows) + "</details>"
+        )
+    ocr_section = ""
+    if scans:
+        pages_label = ", ".join(str(page) for page in scans[:12])
+        if not ocr_available:
+            ocr_section = (f"<h2>Scanned pages</h2><p>Page(s) {escape(pages_label)} are images of text. Text recognition is not "
+                           "installed here, so each scanned page is carried as an image you describe.</p>")
+        else:
+            rows = []
+            if ocr_requested:
+                for block in model.get("blocks", []):
+                    if block.get("ocr_index") is None:
+                        continue
+                    index = block["ocr_index"]
+                    value = form.get(f"ocr_{index}", block.get("text", ""))
+                    rows.append(
+                        f"<label for=ocr_{index}>Recognized text, page {escape(str(block.get('page')))}</label>"
+                        f"<textarea id=ocr_{index} name=ocr_{index} rows=2>{escape(value)}</textarea>")
+                rows.append(f"<input type=hidden name=ocr_count value={sum(1 for b in model.get('blocks', []) if b.get('ocr_index') is not None)}>")
+                rows.append("<label class=check><input type=checkbox name=ocr_reviewed value=yes"
+                            f"{' checked' if form.get('ocr_reviewed') == 'yes' else ''}> I checked the recognized text against the page images and corrected it.</label>")
+            ocr_section = (
+                "<h2>Scanned pages</h2>"
+                f"<p>Page(s) {escape(pages_label)} are images of text. Text recognition (OCR) can turn them into real text; "
+                "recognition makes mistakes, so you check and correct every line before it goes into your copies. "
+                "Clear a box to leave that text out.</p>"
+                f"<label class=check><input type=checkbox name=use_ocr value=yes{' checked' if ocr_requested else ''}> "
+                "Recognize the text on scanned pages</label>"
+                + "".join(rows)
+                + ("<p class=small>If the recognized text carries a scanned page's content, you can mark that page's image decorative.</p>" if ocr_requested else "")
+            )
+    carried = [(link.get("text"), link.get("href"), block.get("page")) for block in model.get("blocks", [])
+               for link in block.get("links") or []]
+    links_section = ""
+    if carried:
+        items = "".join(
+            f"<li><strong>{escape(str(text))}</strong> → <span class=mono>{escape(str(href))}</span> (page {escape(str(page))})</li>"
+            for text, href, page in carried[:60])
+        links_section = ("<h2>Links</h2><p>These links are carried into both copies. Check that each link's words "
+                         f"describe where it goes; fix wording in the source if not.</p><ul class=carried-links>{items}</ul>")
+    pages = sorted({int(block.get("page") or 0) for block in model.get("blocks", []) if block.get("page")})[:MAX_PREVIEW_PAGES]
+    page_previews = ""
+    if pages:
+        page_previews = (
+            "<details class=page-previews><summary>See the original pages</summary>"
+            "<p class=small>Compare with the original while you confirm headings and describe images.</p>"
+            + "".join(
+                f'<figure><img loading=lazy src="/documents/{escape(document_id)}/page/{page}.png" '
+                f'alt="Page {page} of the original document, for visual comparison"><figcaption>Page {page}</figcaption></figure>'
+                for page in pages)
+            + "</details>"
+        )
+    return f'''<section class=panel aria-labelledby=accessible-heading>
+    <p class=eyebrow>Accessible copies</p>
+    <h1 id=accessible-heading>Get an accessible HTML page and a tagged PDF</h1>
+    <p class=lead>We rebuild your document from the structure and image descriptions you confirm, then recheck the new PDF with the same checker. The layout is re-flowed, not a pixel copy of the original.</p>
+    {error_list}
+    {page_previews}
+    <form method=post action="{action}">
+    <label for=accessible-title>Document title</label><input id=accessible-title name=title value="{escape(title_value)}" required>
+    <label for=accessible-language>Primary language</label><input id=accessible-language name=language value="{escape(language_value)}" required>
+    {ocr_section}
+    {figure_section}
+    {links_section}
+    {structure}
+    <div class=actions><button name=format value=html>Download accessible HTML <span aria-hidden=true>↓</span></button>
+    <button name=format value=pdf class=secondary>Download tagged PDF <span aria-hidden=true>↓</span></button></div>
+    </form>
+    <p class=small>Both copies end with a short “About this copy” note: a review record, not a certification.</p>
+    <p><a href="/documents/{escape(document_id)}">Return to the document</a></p></section>'''
+
+
+MOTION_PAUSE_STYLE = "<style id=motion-paused>*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}</style>"
+
+
+def _page_controls(document_path: str, updates_paused: bool, motion_paused: bool, refreshing: bool = True) -> str:
+    """WCAG 2.2.1 / 2.2.2 controls for pages that move or refresh by themselves:
+    pause the 5-second automatic updates, and pause animations (a cookie the
+    service honors on every page). Plain links and forms; no script needed."""
+    parts = []
+    if refreshing:
+        if updates_paused:
+            parts.append(f'<span>Automatic updates are paused.</span><a href="{escape(document_path)}">Resume automatic updates</a>')
+        else:
+            parts.append(f'<a href="{escape(document_path)}?updates=off">Pause automatic updates</a>')
+    state, label = ("playing", "Play animations") if motion_paused else ("paused", "Pause animations")
+    parts.append(
+        f'<form method=post action="/preferences/motion"><input type=hidden name=state value={state}>'
+        f'<input type=hidden name=next value="{escape(document_path + ("?updates=off" if updates_paused else ""))}">'
+        f'<button class=secondary>{label}</button></form>'
+    )
+    return f'<div class=page-controls>{"".join(parts)}</div>'
+
+
+def _safe_next(value: str) -> str:
+    """Same-origin relative paths only; anything else returns to the workspace."""
+    value = (value or "").strip()
+    if not value.startswith("/") or value.startswith("//") or "\\" in value or any(c in value for c in "\r\n"):
+        return "/app"
+    return value
+
+
+def _with_motion_preference(app: Callable) -> Callable:
+    """When the visitor paused animations, add a stop-all-animation style to every HTML page."""
+    def application(environ: dict[str, Any], start_response: Callable):
+        cookies = environ.get("HTTP_COOKIE", "")
+        if "hub_motion=paused" not in [part.strip() for part in cookies.split(";")]:
+            return app(environ, start_response)
+        captured: dict[str, Any] = {}
+
+        def capture(status: str, headers: list[tuple[str, str]], exc_info: Any = None):
+            captured["status"], captured["headers"] = status, list(headers)
+            return lambda data: None
+
+        body = b"".join(app(environ, capture))
+        headers = captured.get("headers", [])
+        if any(name.lower() == "content-type" and value.startswith("text/html") for name, value in headers) and b"</head>" in body:
+            body = body.replace(b"</head>", MOTION_PAUSE_STYLE.encode() + b"</head>", 1)
+            headers = [(name, str(len(body)) if name.lower() == "content-length" else value) for name, value in headers]
+        start_response(captured.get("status", "500 Internal Server Error"), headers)
+        return [body]
+
+    return application
+
+
+def _apply_ocr_review(model: dict[str, Any], scans: list[int], form: dict[str, str]) -> dict[str, Any]:
+    """Mark text that came from OCR and apply the person's corrections.
+
+    Each recognized block gets an ``ocr_index``. Once the review form has been
+    shown (``ocr_count`` present), the corrected text replaces the recognized
+    text, an emptied box drops the block, and links no longer in the text drop.
+    """
+    reviewed = bool(form.get("ocr_count"))
+    blocks, index = [], 0
+    for block in model.get("blocks", []):
+        if block.get("page") in scans and block.get("kind") in {"paragraph", "heading"}:
+            block = {**block, "ocr_index": index}
+            index += 1
+            if reviewed:
+                text = " ".join(form.get(f"ocr_{block['ocr_index']}", "").split())
+                if not text:
+                    continue
+                block["text"] = text
+                block["links"] = [link for link in block.get("links") or [] if link.get("text") and link["text"] in text]
+        blocks.append(block)
+    return {**model, "blocks": blocks}
+
+
 def create_app(settings: ServiceSettings | None = None, repository: StagingRepository | None = None, worker: AssessmentWorker | None = None):
     settings = settings or ServiceSettings.from_environ()
     repository = repository or StagingRepository(settings.data_dir)
     worker = worker or AssessmentWorker(repository)
+    login_limiter = RateLimiter(limit=10, window=300)
+    action_limiter = RateLimiter(limit=60, window=300)
+    trust_proxy = settings.environment == "staging"
+
+    def _too_many(start_response: Callable, retry_after: float):
+        return _response(start_response, "429 Too Many Requests", _simple_page(
+            "Please wait — Accessibility Hub",
+            "<div class=login><section class=locked><h2>Too many attempts in a short time.</h2>"
+            f"<p>Please wait about {int(retry_after // 60) + 1} minute(s), then try again.</p></section></div>"),
+            [("Retry-After", str(int(retry_after)))])
     worker.start()
 
     def _ocr_in_lineage(document: dict[str, Any]) -> bool:
@@ -564,7 +827,8 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                                      "Applied to this copy, with a full record of the change."))
         return improvements
 
-    def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str):
+    def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str,
+                                updates_paused: bool = False, motion_paused: bool = False):
         """Steps 2 and 3 of the educator flow: one processing screen, one ready
         screen. The pipeline moves the teacher forward with no clicks at all."""
         document_id = document["id"]
@@ -599,14 +863,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             data-journey=processing data-stage={stage} data-status-url="/documents/{escape(document_id)}/status.json">{_JOURNEY_SCENE}
             <div class=journey-status role=status aria-live=polite aria-atomic=true>
             <p class=eyebrow>Step 2 of 3</p><h2 data-journey-headline>{escape(status_line)}</h2>
-            <p>{escape(display)} · This page updates by itself every few seconds.</p></div>
-            <ol class=progress-list data-journey-stages>{items}</ol></section>
+            <p>{escape(display)} · {'Automatic updates are paused.' if updates_paused else 'This page updates by itself every few seconds.'}</p></div>
+            <ol class=progress-list data-journey-stages>{items}</ol>{_page_controls(f"/documents/{document_id}", updates_paused, motion_paused)}</section>
             {_sponsored_card(fly=True)}</div></div>'''
             # With scripting available the journey script polls the status
             # endpoint and carries the page forward without reloads; the
             # meta refresh stays as the complete no-JS fallback.
             return _response(start_response, "200 OK", _html_page("Transforming your document — Accessibility Hub",
-                             _educator_shell(progress, persona), "<noscript><meta http-equiv=\"refresh\" content=\"5\"></noscript>"))
+                             _educator_shell(progress, persona), "" if updates_paused else "<noscript><meta http-equiv=\"refresh\" content=\"5\"></noscript>"))
         result = (job or {}).get("result")
         if job_state == "failed" or not result:
             content = f'''<div class=workspace-inner><div class=flow-wrap><section class="panel ready-card">
@@ -764,13 +1028,15 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             f'<span class=seal-fineprint>{escape(datetime.now().strftime("%b %d, %Y"))}</span>'
             f'<span class=seal-fineprint>{escape(document["sha256"][:10])}…</span></div>'
         )
+        accessible_link = (f'<a class="button secondary" href="/documents/{escape(document_id)}/accessible">Get accessible HTML + tagged PDF <span aria-hidden=true>→</span></a>'
+                           if settings.produce_ready else "")
         content = f'''<div class=workspace-inner><div class=flow-wrap>
         <section class="panel ready-card" aria-labelledby=ready-heading data-journey=ready>
         <span class=ready-stars aria-hidden=true><svg class=rs1><use href="#i-star"/></svg><svg class=rs2><use href="#i-spark"/></svg><svg class=rs3><use href="#i-star"/></svg></span>
         <p class=eyebrow>Step 3 of 3</p>
         <h1 id=ready-heading>Your document is ready.</h1>
         <p class=lead>{escape(display)} — reviewed, with the final page carrying the review record.</p>
-        <div class=ready-actions>{download}</div>
+        <div class=ready-actions>{download}{accessible_link}</div>
         {badge}
         <p class=small>A review record, not a certification.</p></section>
         <div class=insights>{compare_section}{kpi_section}{improved_section}{look_section}{verified_section}{unchecked_section}</div>
@@ -814,7 +1080,16 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             payload = json.dumps(settings.health_payload()).encode()
             start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(payload))), ("Cache-Control", "no-store")])
             return [payload]
+        if path == "/preferences/motion" and method == "POST":
+            form = _form(environ)
+            paused = form.get("state") == "paused"
+            cookie = ("hub_motion=paused; Path=/; SameSite=Lax; HttpOnly; Max-Age=31536000" if paused
+                      else "hub_motion=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0")
+            return _redirect(start_response, _safe_next(form.get("next", "")), [("Set-Cookie", cookie)])
         if path == "/logout" and method == "POST":
+            ending = _session_data(environ, settings)
+            if ending and ending.get("sid"):
+                repository.revoke_session(str(ending["sid"]), int(ending.get("exp") or 0))
             expired = "hub_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" + ("; Secure" if settings.environment == "staging" else "")
             return _redirect(start_response, "/login?signed-out=1", [("Set-Cookie", expired)])
         if path == "/login" and method == "GET":
@@ -829,6 +1104,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 return _response(start_response, "200 OK", _simple_page("Sign in — Accessibility Hub", f"<div class=login><section class=panel><p class=eyebrow>Access</p><h2>Enter the staging workspace</h2>{note}{sso}<p>Enter your access code to continue.</p><form method=post><label for=code>Access code</label><input id=code name=code type=password autocomplete=current-password required><div class=actions><button class={'secondary' if sso else 'primary'}>Continue</button></div></form></section></div>"))
             return _response(start_response, "503 Service Unavailable", _simple_page("Access setup required", "<div class=login><section class=locked><h2>Access setup is incomplete</h2><p>This service remains closed until a staging access code and session secret are configured.</p></section></div>"))
         if path == "/login" and method == "POST":
+            retry = login_limiter.hit(f"login:{client_address(environ, trust_proxy)}")
+            if retry is not None:
+                return _too_many(start_response, retry)
             code = _form(environ).get("code", "")
             if settings.login_ready and hmac.compare_digest(code, settings.access_code or ""):
                 cookie = f"hub_session={_session_token(settings)}; HttpOnly; SameSite=Lax; Path=/" + ("; Secure" if settings.environment == "staging" else "")
@@ -842,7 +1120,11 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             cookie = f"hub_session={_session_token(settings, actor=SSO_ACTOR, display=SSO_DISPLAY)}; HttpOnly; SameSite=Lax; Path=/"
             return _redirect(start_response, "/app", [("Set-Cookie", cookie)])
         session = _session_data(environ, settings)
+        if session and session.get("sid") and repository.session_revoked(str(session["sid"])):
+            session = None
         signed_in = session is not None
+        updates_paused = "updates=off" in environ.get("QUERY_STRING", "").split("&")
+        motion_paused = "hub_motion=paused" in [part.strip() for part in environ.get("HTTP_COOKIE", "").split(";")]
         persona = (session or {}).get("display") or ""
         actor = (session or {}).get("actor") or ACTOR_ID
         dev = settings.environment == "development"
@@ -857,6 +1139,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         educator = dev and settings.synthetic_intake_ready and signed_in and actor == SSO_ACTOR
         if not settings.public_access and not signed_in:
             return _redirect(start_response, "/login")
+        if method == "POST" and path.startswith("/documents"):
+            retry = action_limiter.hit(f"act:{actor}:{client_address(environ, trust_proxy)}")
+            if retry is not None:
+                return _too_many(start_response, retry)
         if path in {"/", "/app"} and method == "GET":
             documents = repository.list_documents(TENANT_ID)
             by_id = {d["id"]: d for d in documents}
@@ -1027,7 +1313,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 start_response("200 OK", [("Content-Type", "image/png"), ("Content-Length", str(len(image))), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
                 return [image]
             if len(pieces) == 2 and method == "GET" and educator and "view=advanced" not in environ.get("QUERY_STRING", ""):
-                return _educator_document_view(start_response, document, persona)
+                return _educator_document_view(start_response, document, persona, updates_paused, motion_paused)
             if len(pieces) == 2 and method == "GET":
                 job = repository.latest_job(TENANT_ID, document_id)
                 result = job.get("result") if job else None
@@ -1036,7 +1322,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 is_recheck = bool(document.get("parent_document_id"))
                 # A slow vanilla refresh keeps this JavaScript-free page useful
                 # while the assessment runs; it stops once the job is terminal.
-                refresh_head = "" if terminal else "<meta http-equiv=\"refresh\" content=\"5\">"
+                refresh_head = "" if terminal or updates_paused else "<meta http-equiv=\"refresh\" content=\"5\">"
+                controls = _page_controls(f"/documents/{document_id}", updates_paused, motion_paused, refreshing=not terminal)
+                checks_line = "Automatic updates are paused; use Refresh now to check." if updates_paused else "This page checks again every five seconds."
                 remediation_rows = repository.remediations(TENANT_ID, document_id)
                 provenance_items = []
                 for row in remediation_rows:
@@ -1079,14 +1367,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         <section class="panel progress-card journey-card" aria-label="{escape(phase_label)}" data-stage=improving>{_JOURNEY_SCENE}
                         <div class=journey-status role=status aria-live=polite aria-atomic=true>
                         <p class=eyebrow>Deterministic review</p><h2>{escape(headline)}</h2>
-                        <p>This usually takes a few seconds. This page checks again every five seconds.</p></div>
+                        <p>This usually takes a few seconds. {escape(checks_line)}</p></div>
                         <ol class=progress-list>{items}</ol>
-                        <div class=actions><a class="button secondary" href="/documents/{escape(document_id)}">Refresh now</a></div>
+                        <div class=actions><a class="button secondary" href="/documents/{escape(document_id)}{'?updates=off' if updates_paused else ''}">Refresh now</a></div>{controls}
                         <p class=small>{escape(gate_line)}</p></section>{_sponsored_card(fly=True)}</div>'''
                         return _response(start_response, "200 OK", _html_page("Review in progress — Accessibility Hub", _app_shell(current_step, progress, signed_in, dev, persona), refresh_head))
                     phase_label = "Checking your improved copy" if is_recheck else ("Reviewing your document" if is_upload else "Reviewing the sample")
                     prepared_step = "<strong>Upload received</strong>Stays on this machine" if is_upload else "<strong>Sample prepared</strong>Bundled content only"
-                    progress = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / review</p><h1>{escape(phase_label)}</h1><p class=lead>{escape(document['filename'])}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>In progress</span></header><section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div><p class=eyebrow>Deterministic review</p><h2>Looking for useful accessibility signals…</h2><p>This usually takes a few seconds. This page checks again every five seconds.</p><ol class=progress-list><li>{prepared_step}</li><li class=active><strong>Reviewing signals</strong>Metadata, structure, and text</li><li><strong>Building next steps</strong>Plain-language guidance</li></ol><div class=actions><a class="button secondary" href="/documents/{escape(document_id)}">Refresh now</a></div><p class=small>Review first — the Fix Lab opens once this review completes.</p></section>{_sponsored_card()}</div>'''
+                    progress = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / review</p><h1>{escape(phase_label)}</h1><p class=lead>{escape(document['filename'])}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>In progress</span></header><section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div><p class=eyebrow>Deterministic review</p><h2>Looking for useful accessibility signals…</h2><p>This usually takes a few seconds. {escape(checks_line)}</p><ol class=progress-list><li>{prepared_step}</li><li class=active><strong>Reviewing signals</strong>Metadata, structure, and text</li><li><strong>Building next steps</strong>Plain-language guidance</li></ol><div class=actions><a class="button secondary" href="/documents/{escape(document_id)}{'?updates=off' if updates_paused else ''}">Refresh now</a></div>{controls}<p class=small>Review first — the Fix Lab opens once this review completes.</p></section>{_sponsored_card()}</div>'''
                     return _response(start_response, "200 OK", _html_page("Review in progress — Accessibility Hub", _app_shell(current_step, progress, signed_in, dev, persona), refresh_head))
                 resolved_count = 0
                 if is_recheck and result:
@@ -1140,7 +1428,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         produce_action = f'<div class=actions><a class=button href="/documents/{escape(document_id)}/produced">Download the reviewed copy <span aria-hidden=true>↓</span></a></div>'
                     else:
                         produce_action = '<div class=actions><button disabled aria-disabled=true>Producing is not available yet</button></div><p class=small>The review-summary sealer is not installed in this environment. Everything above still works.</p>'
-                    produce_card = f'''<section class="panel produce-card" aria-labelledby=produce-heading><div class=produce-grid>{badge}<div class=produce-copy><p class=eyebrow>Produce</p><h2 id=produce-heading>Produce your document</h2><p>Download this version with one added "Review summary" page: the review date, a short evidence hash, where findings landed, and the fixes applied. Nothing else in the document changes.</p><p class=small>A review record, not a certification.</p>{produce_action}</div></div></section>'''
+                    accessible_action = (f'<p><a href="/documents/{escape(document_id)}/accessible">Or rebuild it as accessible HTML and a tagged PDF</a></p>'
+                                         if settings.produce_ready else "")
+                    produce_card = f'''<section class="panel produce-card" aria-labelledby=produce-heading><div class=produce-grid>{badge}<div class=produce-copy><p class=eyebrow>Produce</p><h2 id=produce-heading>Produce your document</h2><p>Download this version with one added "Review summary" page: the review date, a short evidence hash, where findings landed, and the fixes applied. Nothing else in the document changes.</p><p class=small>A review record, not a certification.</p>{produce_action}{accessible_action}</div></div></section>'''
                 findings = f'''<section class=panel aria-labelledby=findings-heading><p class=eyebrow>{'4 · Verify' if is_recheck else '2 · Understand'}</p><h2 id=findings-heading>Signals and next actions</h2>{_signals(result, job_state)}<div class=advanced><details><summary>Remediation provenance</summary><ul class=queue>{provenance}</ul></details></div></section>'''
                 if not is_recheck and job_state == "succeeded":
                     text_layer_open = bool(result) and any(
@@ -1159,7 +1449,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     one_click = ""
                     if metadata_defects:
                         one_click = f'''<form method=post action="/documents/{escape(document_id)}/remediate/metadata"><input type=hidden name=title value="{escape(suggested)}"><input type=hidden name=language value="en-US"><div class=actions><button>Apply suggested fixes and recheck <span aria-hidden=true>→</span></button></div></form><p class=small>One click sets the title to “{escape(suggested)}” and the language to English (US) in a new copy, then rechecks it.</p><div class=login-divider aria-hidden=true>or</div>'''
-                    fixlab = f'''<aside class=fixlab aria-labelledby=fix-heading><p class=eyebrow>3 · Improve</p><h2 id=fix-heading>Fix the clearest issues</h2><p>Add a meaningful title and primary language, then run the check again on a copy.</p>{one_click}<form method=post action="/documents/{escape(document_id)}/remediate/metadata"><label for=document-title>Document title</label><input id=document-title name=title value="{escape(suggested)}" required><label for=document-language>Primary language</label><input id=document-language name=language value="en-US" required><div class=actions><button class={'secondary' if one_click else 'primary'}>Apply and recheck <span aria-hidden=true>→</span></button></div></form><div class=advanced>{_structure_fix(document_id, blocks)}{ocr_action}{cleanup}</div><p class=small>Each recheck creates a new version and keeps the source record intact.</p></aside>'''
+                    fixlab = f'''<aside class=fixlab aria-labelledby=fix-heading><p class=eyebrow>3 · Improve</p><h2 id=fix-heading>Fix the clearest issues</h2><p>Add a meaningful title and primary language, then run the check again on a copy.</p>{one_click}<form method=post action="/documents/{escape(document_id)}/remediate/metadata"><label for=document-title>Document title</label><input id=document-title name=title value="{escape(suggested)}" required><label for=document-language>Primary language</label><input id=document-language name=language value="en-US" required><div class=actions><button class={'secondary' if one_click else 'primary'}>Apply and recheck <span aria-hidden=true>→</span></button></div></form><div class=advanced>{_structure_fix(document_id, blocks)}{_tagged_figure_fix(document_id, repository.document_bytes(TENANT_ID, document_id))}{ocr_action}{cleanup}</div><p class=small>Each recheck creates a new version and keeps the source record intact.</p></aside>'''
                 else:
                     parent_link = f'<a class="button secondary" href="/documents/{escape(document["parent_document_id"])}">View original sample</a>' if is_recheck else '<a class="button secondary" href="/app">Start another sample</a>'
                     fixlab = f'''<aside class=fixlab><p class=eyebrow>Next step</p><h2>{'Compare the result' if is_recheck else 'Try another sample'}</h2><p>{'The rechecked copy is stored as a separate version of the same lineage.' if is_recheck else 'This assessment did not complete, so no fixes were applied.'}</p><div class=actions>{parent_link}<a class="button secondary" href="/app">Workspace</a></div><div class=advanced>{cleanup}</div></aside>'''
@@ -1167,6 +1457,130 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 layout_class = "document-layout arrive a4" if hosted_reveal else "document-layout"
                 content = f'''<div class=workspace-inner>{sprite}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else 'Synthetic demo only'}</span></header>{completion}{improved_story}{summary_row}{produce_card}<div class="{layout_class}">{findings}{fixlab}</div></div>'''
                 return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", _app_shell("check" if is_recheck else "improve", content, signed_in, dev, persona), refresh_head))
+            if len(pieces) in (3, 4) and pieces[2] in {"accessible", "figure", "page"}:
+                # Accessible HTML + tagged PDF, re-authored from human-confirmed
+                # structure and figure decisions. Behind the login wall already;
+                # hosted environments keep it closed until HUB_ENABLE_PRODUCE.
+                not_found = _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>")
+                if not settings.produce_ready:
+                    return _response(start_response, "404 Not Found", not_found)
+                job = repository.latest_job(TENANT_ID, document_id)
+                if not job or job["state"] != "succeeded":
+                    return _redirect(start_response, f"/documents/{document_id}")
+                source = repository.document_bytes(TENANT_ID, document_id)
+                if pieces[2] == "figure":
+                    try:
+                        number = int(pieces[3]) if len(pieces) == 4 else 0
+                        figure = next(block for block in build_docmodel(source)["blocks"]
+                                      if block.get("kind") == "figure" and block.get("figure") == number)
+                    except (ValueError, StopIteration, DerivationError):
+                        return _response(start_response, "404 Not Found", not_found)
+                    image = base64.b64decode(figure["base64"])
+                    start_response("200 OK", [("Content-Type", figure["mime"]), ("Content-Length", str(len(image))),
+                                              ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
+                    return [image]
+                if pieces[2] == "page":
+                    try:
+                        number = int(pieces[3].removesuffix(".png")) if len(pieces) == 4 else 0
+                    except ValueError:
+                        number = 0
+                    image = rasterize_page_png(source, number, 520) if 1 <= number <= MAX_PREVIEW_PAGES else None
+                    if image is None:
+                        return _response(start_response, "404 Not Found", not_found)
+                    start_response("200 OK", [("Content-Type", "image/png"), ("Content-Length", str(len(image))),
+                                              ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
+                    return [image]
+                if len(pieces) != 3 or method not in {"GET", "POST"}:
+                    return _response(start_response, "404 Not Found", not_found)
+                suggested = _suggested_title(document["filename"], document["source_kind"])
+                shell = (lambda inner: _educator_shell(inner, persona)) if educator else (lambda inner: _app_shell("improve", inner, signed_in, dev, persona))
+                form = _form(environ) if method == "POST" else {}
+                scans = scanned_pages(source)
+                ocr_available = bool(scans) and bool(_toolchain_versions().get("tesseract"))
+                ocr_requested = ocr_available and form.get("use_ocr") == "yes"
+                ocr_problems: list[str] = []
+                model_source = source
+                if ocr_requested:
+                    try:
+                        model_source, _ocr_report = OcrRemediation.with_builtin_tools().apply(document["filename"], source)
+                    except RemediationError as error:
+                        ocr_problems.append(f"Text recognition did not run: {error}")
+                        ocr_requested = False
+                try:
+                    blocks = extract_blocks(model_source)
+                except DerivationError:
+                    blocks = []
+                roles = None
+                if form.get("block_count"):
+                    try:
+                        roles = _guided_structure_roles(form)
+                    except RemediationError:
+                        roles = None
+                try:
+                    model = build_docmodel(model_source, roles=roles, title=form.get("title"), language=form.get("language"))
+                    if ocr_requested:
+                        model = _apply_ocr_review(model, scans, form)
+                except DerivationError as error:
+                    inner = f"<div class=workspace-inner><section class=locked><h2>Accessible copies are not available for this document.</h2><p>{escape(str(error))}</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"
+                    return _response(start_response, "400 Bad Request", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                if method == "GET":
+                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, {}, [], suggested, scans, ocr_available)}</div></div>"
+                    return _response(start_response, "200 OK", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                decisions = {}
+                for block in model["blocks"]:
+                    if block.get("kind") == "figure":
+                        number = block["figure"]
+                        if form.get(f"fig_{number}_choice") == "decorative":
+                            decisions[number] = {"decorative": True}
+                        else:
+                            decisions[number] = {"alt": form.get(f"fig_{number}_alt", "")}
+                model = apply_figure_decisions(model, decisions)
+                problems = ocr_problems + validate_docmodel(model)
+                if ocr_requested and (form.get("ocr_reviewed") != "yes" or not form.get("ocr_count")):
+                    problems.insert(0, "Check the recognized text against the page images, correct it, and confirm before producing copies.")
+                output_format = form.get("format") if form.get("format") in {"html", "pdf"} else "html"
+                if problems:
+                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, form, problems, suggested, scans, ocr_available, ocr_requested)}</div></div>"
+                    return _response(start_response, "422 Unprocessable Entity", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                improvements: list[str] = []
+                node: dict[str, Any] | None = document
+                seen_ids: set[str] = set()
+                while node is not None and node["id"] not in seen_ids:
+                    seen_ids.add(node["id"])
+                    for row in repository.remediations(TENANT_ID, node["id"]):
+                        if row["kind"] != "seal":
+                            improvements.append(REMEDIATION_LABELS.get(row["kind"], row["kind"]))
+                    parent_id = node.get("parent_document_id")
+                    node = repository.document(TENANT_ID, parent_id) if parent_id else None
+                if ocr_requested:
+                    improvements.append("Text recognized from scanned pages, checked and corrected by a person")
+                improvements += ["Rebuilt with confirmed structure and image decisions"]
+                try:
+                    from tina.author import AccessiblePackageProducer
+                    package = AccessiblePackageProducer.with_builtin_tools().produce(
+                        model, {"improvements": improvements, "review_date": repo_now()[:10]}, verify=False)
+                except (DocModelError, RuntimeError) as error:
+                    inner = f"<div class=workspace-inner><section class=locked><h2>Your copies were not produced.</h2><p>{escape(str(error))}</p><p><a href=\"/documents/{escape(document_id)}/accessible\">Back to accessible copies</a></p></section></div>"
+                    return _response(start_response, "503 Service Unavailable", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                repository.audit(TENANT_ID, actor, "accessible_copy_produced", document_id, {
+                    "format": output_format,
+                    "source_sha256": package.get("source_sha256"),
+                    "result_sha256": package["pdf_sha256"] if output_format == "pdf" else package["html_sha256"],
+                    "figures": package.get("figures"), "headings": package.get("headings"),
+                })
+                safe_base = re.sub(r"[^A-Za-z0-9._ ()-]+", "-", _split_version(document["filename"])[0]).strip(" .-") or "document"
+                if output_format == "pdf":
+                    body, content_type = package["pdf"], "application/pdf"
+                else:
+                    body, content_type = package["html"].encode("utf-8"), "text/html; charset=utf-8"
+                start_response("200 OK", [
+                    ("Content-Type", content_type),
+                    ("Content-Disposition", f'attachment; filename="{safe_base}.accessible.{output_format}"'),
+                    ("Content-Length", str(len(body))),
+                    ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"),
+                ])
+                return [body]
             if len(pieces) == 3 and pieces[2] == "produced" and method == "GET":
                 # Development-only, auth-gated (we are already behind the login
                 # wall here). Applies nothing new: seals the CURRENT version's
@@ -1248,6 +1662,24 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                             roles = _guided_structure_roles(form)
                             order = None  # Reading order defaults to the page order shown in the form.
                         fixed, provenance = StructureRemediation.with_builtin_tools().apply(document["filename"], source, confirmed_roles=roles, reading_order=order)
+                    elif kind == "figures":
+                        from tina.pdfcraft import PdfCraft, PdfCraftUnavailable
+
+                        try:
+                            count = max(0, min(int(form.get("figure_count", "0")), MAX_FORM_BLOCKS))
+                        except ValueError:
+                            raise RemediationError("The image form was incomplete. Return to the document and try again.")
+                        decisions: dict[str, dict[str, Any]] = {}
+                        for position in range(1, count + 1):
+                            choice = form.get(f"fig_{position}_choice", "keep")
+                            if choice == "decorative":
+                                decisions[str(position)] = {"decorative": True}
+                            elif choice == "describe":
+                                decisions[str(position)] = {"alt": form.get(f"fig_{position}_alt", "")}
+                        try:
+                            fixed, provenance = PdfCraft.with_builtin_tools().apply_semantics(document["filename"], source, figures=decisions)
+                        except PdfCraftUnavailable:
+                            raise RemediationError("Describing images in tagged PDFs needs PdfCraft, which is not installed in this environment.")
                     elif kind == "ocr":
                         if form.get("confirmed") != "yes":
                             raise RemediationError("Confirm that you will review generated text before adding a text layer.")
@@ -1267,4 +1699,4 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     message = "Something in this request could not be read. Return to the document and try again."
                 return _response(start_response, "400 Bad Request", _simple_page("Repair needs a closer look", f"<div class=shell><section class=locked><h2>This change was not applied.</h2><p>{escape(message)}</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"))
         return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
-    return app
+    return harden(_with_motion_preference(app), hosted=settings.environment == "staging")

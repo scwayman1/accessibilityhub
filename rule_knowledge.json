@@ -107,6 +107,13 @@
       "who_it_affects": "Reviewers and specialists deciding what to fix next.",
       "fix_at_source": "Use the raw report alongside these findings; do not treat a clean validator run as proof the document works for real readers.",
       "auto_fixable": false
+    },
+    "PDF.SECOND_OPINION.PDFCRAFT": {
+      "title": "Second-opinion check",
+      "why_it_matters": "No single checker sees everything. A second checker modeled on Acrobat's Accessibility Checker looks at details the first one does not, such as table summaries, and points a person at them.",
+      "who_it_affects": "Everyone who relies on the document's structure: screen reader users, keyboard users, and people who reflow text to read it.",
+      "fix_at_source": "Fix flagged items in the source document (add table summaries or captions, tag figures, set the title and language) and export again; the second opinion should then come back clear.",
+      "auto_fixable": false
     }
   }
 }

@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from tina.derive import DerivationError, HtmlDraftConverter, extract_blocks as derive_blocks, extract_images
+from tina.author import AccessiblePackageProducer
+from tina.derive import DerivationError, HtmlDraftConverter, build_docmodel, extract_blocks as derive_blocks, extract_images
+from tina.docmodel import DocModelError, apply_figure_decisions, pending_decisions
 from tina.evidence import build_receipt
 from tina.intelligence import IntelligenceError, IntelligenceGateway
 from tina.learning import LearningJourney
@@ -119,6 +121,36 @@ def run_local_convert(filename: str, payload: bytes, roles: dict[str, str] | Non
     report = converter.convert(filename, payload, roles=roles)
     report["draft_filename"] = f"{Path(filename).stem}.draft.html"
     return report
+
+
+def run_local_produce(
+    filename: str,
+    payload: bytes,
+    title: str | None = None,
+    language: str | None = None,
+    roles: dict[str, str] | None = None,
+    figures: dict[str, dict[str, Any]] | None = None,
+    improvements: list[str] | None = None,
+) -> dict[str, Any]:
+    """Re-author the PDF as accessible HTML + a tagged PDF from human-confirmed
+    structure and figure decisions. Raises DocModelError (with the pending
+    figures attached) until every image has a person's decision."""
+    validate_pdf_upload(filename, payload)
+    model = apply_figure_decisions(build_docmodel(payload, roles=roles, title=title, language=language), figures)
+    pending = pending_decisions(model)
+    if pending:
+        error = DocModelError([f"Figure {item['figure']} on page {item['page']} needs a description or a decorative decision." for item in pending])
+        error.pending = pending  # type: ignore[attr-defined]
+        raise error
+    package = AccessiblePackageProducer.with_builtin_tools().produce(model, {"improvements": improvements or []})
+    stem = Path(filename).stem
+    pdf_bytes = package.pop("pdf")
+    return {
+        **package,
+        "html_filename": f"{stem}.accessible.html",
+        "pdf_filename": f"{stem}.accessible.pdf",
+        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+    }
 
 
 def run_local_fix_semantics(
@@ -384,6 +416,40 @@ def create_server(
                     self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Local review could not complete: {type(error).__name__}"})
                     return
                 record_fix_event(result)
+                self.send_json(HTTPStatus.OK, result)
+                return
+            if request_url.path == "/api/produce":
+                body = self.read_json_body(length)
+                if body is None:
+                    return
+                try:
+                    payload_bytes = base64.b64decode(str(body.get("pdf_base64", "")), validate=True)
+                except Exception:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": "A base64-encoded PDF is required."})
+                    return
+                try:
+                    result = run_local_produce(
+                        str(body.get("filename") or "document.pdf"), payload_bytes,
+                        title=body.get("title"), language=body.get("language"),
+                        roles=body.get("roles"), figures=body.get("figures"),
+                        improvements=body.get("improvements"),
+                    )
+                except DocModelError as error:
+                    self.send_json(HTTPStatus.UNPROCESSABLE_ENTITY, {
+                        "error": str(error), "problems": error.problems,
+                        "pending": getattr(error, "pending", []),
+                    })
+                    return
+                except (UploadValidationError, DerivationError) as error:
+                    self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                except Exception as error:
+                    self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"The accessible copy could not be produced: {type(error).__name__}"})
+                    return
+                try:
+                    journey.record_activity("convert", result.get("source_sha256"))
+                except Exception:
+                    pass
                 self.send_json(HTTPStatus.OK, result)
                 return
             if request_url.path == "/api/fix-structure":

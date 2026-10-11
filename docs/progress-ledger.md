@@ -5,7 +5,7 @@
 > [AI architecture](ai-architecture-byok.md), beyond what individual pull
 > requests describe. Every "shipped" claim below names its implementation and
 > its tests — the same evidence-before-claims discipline the product itself
-> enforces. Last updated: 2026-08-04.
+> enforces. Last updated: 2026-10-11.
 
 ## Post-merge review fixes (2026-07-20)
 
@@ -207,6 +207,111 @@ driven by a live product-render review of the merged build:
 
 Tests: 240 total (was 185). Browser-verified before/after across the
 workbench, landing, and staging surfaces.
+
+## Follow-up loop: validation, own-UI accessibility, links, OCR, image CI (2026-10-11)
+
+- **veraPDF runs locally:**
+  - `scripts/install_verapdf.sh` installs the pinned CLI (greenfield-apps
+    1.28.2) from Maven Central.
+  - `check_pdf.py` prefers this local CLI, keeps the pinned Docker image as
+    the fallback, and reports UA-1 failed clauses.
+  - CI installs it, so `tests/test_verapdf.py` checks our produced PDFs on
+    every PR.
+  - Result: no produced PDF in the bench has a failed UA-1 machine check,
+    while the untagged sources and the legacy `.ready.pdf` do fail.
+- **Our own UI (ACR-1..4):**
+  - Field borders now use `--field #857D75` (4.05:1).
+  - Progress pages have "Pause automatic updates".
+  - Sessions last 20 hours (WCAG's twenty-hour exception).
+  - A "Pause animations" control works without scripts in hosted mode
+    (cookie plus middleware); the workbench has a toggle.
+  - Fix Lab fields have visible labels.
+  - Tests: `OwnSurfaceAccessibilityTests` in `tests/test_hardening.py`.
+    Assistive-technology testing is still pending.
+- **Links:**
+  - Link annotations are matched to the words drawn under them and attached
+    to the paragraph containing those words.
+  - Addresses written in the text link to themselves.
+  - Only http, https and mailto links are allowed.
+  - Produced PDFs carry tagged `/Link` elements, and the form lists the
+    links so a person can check them.
+  - Tests: `LinkTests`.
+- **OCR before rebuild:**
+  - Scanned pages (`scanned_pages`) can be recognized with tesseract.
+  - Every recognized line is shown for a person to correct, and nothing is
+    produced until they confirm.
+  - The copy's note records that a person corrected the text.
+  - Test:
+    `ServiceAccessibleCopyTests.test_scanned_pages_can_be_recognized_reviewed_and_corrected`.
+- **Docker image in CI:**
+  - `.github/workflows/docker.yml` builds the image: PdfCraft stage, veraPDF
+    stage, plus pango, fonts, poppler, qpdf, tesseract and Java.
+  - `scripts/docker_smoke.sh` then checks that every tool is present, produces
+    and validates a copy inside the container, and checks `/healthz`.
+
+## Finishing loop — PdfCraft, accessible output files, pilot hardening (2026-10-11)
+
+The missing tooling was an Acrobat-comparable editor. It is **PdfCraft**
+([storytold/pdfcraft](https://github.com/storytold/pdfcraft), MIT OR
+Apache-2.0, pinned at `bbbe600`), from the ArtCraft suite. A source read showed
+it cannot write tag trees or create tagged PDFs (that is its milestone M12), so
+it serves as checker, fixer, and renderer, and the output files come from our
+own pipeline.
+
+- **Accessible output files (the new "flat files"):**
+  - `tina/docmodel.py`: a JSON document model with validation. Every figure
+    needs a person's description or a decorative decision; tables need headers.
+  - `tina/derive.py::build_docmodel` shares the HTML draft's block index, so
+    roles a person confirmed carry over.
+  - `tina/author.py`: semantic HTML plus a WeasyPrint `pdf/ua-1` tagged PDF.
+    It has a structure tree, `/Lang`, `DisplayDocTitle`, embedded fonts, and
+    `/Summary` on captioned tables. Decorative images are drawn as artifacts.
+    It only resolves `data:` URIs, and rechecks its own PDF.
+  - Gateway tool: `document.produce.accessible_package`.
+  - Surfaces: `POST /api/produce` in the workbench, and
+    `/documents/{id}/accessible` in staging (gated by `HUB_ENABLE_PRODUCE` in
+    hosted environments).
+  - Tests: `tests/test_author.py`.
+- **PdfCraft integration (`tina/pdfcraft.py`):**
+  - `document.check.pdfcraft`: a second-opinion check against 32
+    Acrobat-style rules. Its failures produce one advisory finding,
+    `PDF.SECOND_OPINION.PDFCRAFT`, and disagreements with our rule pack are
+    recorded in `second_opinion`.
+  - `document.remediate.pdfcraft_semantics`: alt text, decorative marking,
+    title and language on PDFs that are already tagged. Exposed in staging as
+    "Describe images in this tagged PDF".
+  - `document.render.page`: page images used for the thumbnail fallback and
+    the "See the original pages" panel.
+  - When PdfCraft is absent, reviews disclose the skipped check under
+    completeness.
+  - Build with `scripts/build_pdfcraft.sh`. Tests: `tests/test_pdfcraft.py`
+    (fake binary, plus real-binary tests that skip when it is missing).
+- **Pilot hardening (`service/hardening.py`):**
+  - `render.yaml` now requires sign-in.
+  - Sign-in and document actions are rate limited.
+  - Sign-out revokes the session on the server.
+  - Hosted responses carry HSTS.
+  - Each request writes one JSON log line with no content.
+  - A two-stage `Dockerfile` bundles PdfCraft, pango, fonts, poppler, qpdf and
+    tesseract. Switching Render to it, plus a disk, is a billing decision.
+  - Tests: `tests/test_hardening.py`.
+- **Commercial pack:** `docs/commercial/` holds drafts awaiting counsel review.
+  Open decisions are in its README.
+- **Bench:** `scripts/transform_bench.py --produce` builds and rechecks an
+  accessible copy of every corpus document (images are treated as decorative,
+  for measurement only).
+  - Baseline on 2026-10-11 (`--fast`): 7 of 7 readable documents produced.
+    Our checker found 0 Needs-attention items and PdfCraft found 0 failures in
+    the produced PDFs. The encrypted document was declined as expected.
+  - veraPDF did not run here (no Docker daemon), so that check is still open.
+- **Baseline fix:** staging tests no longer leak the `setUp` worker thread into
+  a deleted temp folder, which had caused intermittent "Directory not empty"
+  failures.
+- **Known gaps, carried forward:**
+  - The legacy `.ready.pdf` seal page is still untagged. The accessible copy
+    is the tagged alternative.
+  - Link annotations, OCR and the UI defects were addressed in the follow-up
+    loop above.
 
 ## Demo-readiness loop (2026-08-04)
 

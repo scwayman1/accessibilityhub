@@ -23,21 +23,26 @@ THUMBNAIL_WIDTH = 560
 
 
 def rasterize_page1_png(payload: bytes, width: int = THUMBNAIL_WIDTH) -> bytes | None:
-    """First page of a PDF as a PNG about ``width`` px wide, via pdftoppm.
+    """First page of a PDF as a PNG about ``width`` px wide (see rasterize_page_png)."""
+    return rasterize_page_png(payload, 1, width)
+
+
+def rasterize_page_png(payload: bytes, page: int = 1, width: int = THUMBNAIL_WIDTH) -> bytes | None:
+    """One page of a PDF as a PNG about ``width`` px wide, via pdftoppm or PdfCraft.
 
     Returns None — never raises — when pdftoppm is absent, times out, or the
     document cannot be rasterized (encrypted, damaged). Callers fall back to
     an honest schematic; the review flow itself never depends on this.
     """
     if not shutil.which("pdftoppm"):
-        return None
+        return _pdfcraft_page_png(payload, page, width)
     try:
         with tempfile.TemporaryDirectory(prefix="hub-page1-") as temp_dir:
             root = Path(temp_dir)
             source = root / "source.pdf"
             source.write_bytes(payload)
             result = subprocess.run(
-                ["pdftoppm", "-png", "-f", "1", "-l", "1",
+                ["pdftoppm", "-png", "-f", str(int(page)), "-l", str(int(page)),
                  "-scale-to-x", str(width), "-scale-to-y", "-1",
                  str(source), str(root / "page")],
                 capture_output=True, timeout=30, check=False,
@@ -48,6 +53,28 @@ def rasterize_page1_png(payload: bytes, width: int = THUMBNAIL_WIDTH) -> bytes |
             return produced[0].read_bytes() if produced else None
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+def _pdfcraft_page_png(payload: bytes, page: int, width: int) -> bytes | None:
+    """Fallback renderer: PdfCraft's page render, scaled to ``width``. Never raises."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+        from tina.pdfcraft import PdfCraft
+
+        craft = PdfCraft.with_builtin_tools()
+        if not craft.available:
+            return None
+        png = craft.render_page(payload, int(page), dpi=96)
+        image = Image.open(BytesIO(png))
+        if image.width != width:
+            image = image.resize((width, max(1, round(image.height * width / image.width))))
+        out = BytesIO()
+        image.save(out, format="PNG")
+        return out.getvalue()
+    except Exception:
+        return None
+
 
 _VERSION_PATTERN = re.compile(r"^(?P<base>.+)\.v(?P<version>\d+)$")
 
@@ -184,6 +211,9 @@ def normalize_report(report: dict[str, Any]) -> dict[str, Any]:
             "evidence": item.get("evidence"), "next_action": "Keep this document detail in place.",
             "educator_context": False, "location": "machine evidence",
         })
+    second = report.get("second_opinion")
+    if isinstance(second, dict) and second.get("available") is False and report.get("findings") is not None:
+        completeness.append("The second-opinion checker (PdfCraft) isn't available in this environment, so that check was not run.")
     # The report's own honesty list, in full — including color-only meaning.
     # Toolchain entries are already covered by the completeness notes above.
     for item in report.get("not_assessed", []):
@@ -226,7 +256,7 @@ class AssessmentWorker:
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=10)
 
     def _run(self) -> None:
         while not self._stop.is_set():

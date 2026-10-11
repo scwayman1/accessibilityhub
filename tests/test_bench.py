@@ -108,7 +108,7 @@ class QpdfLiveWiringTests(unittest.TestCase):
         toolchain_versions.cache_clear()
         versions = toolchain_versions()
         self.assertIsNotNone(versions["qpdf"])
-        self.assertEqual(set(versions), {"qpdf", "tesseract", "pdftoppm", "verapdf"})
+        self.assertEqual(set(versions), {"qpdf", "tesseract", "pdftoppm", "verapdf", "pdfcraft"})
 
 
 class BenchEndToEndTests(unittest.TestCase):

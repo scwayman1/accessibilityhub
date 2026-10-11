@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,10 +55,23 @@ class StagingRepository:
                     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor TEXT NOT NULL,
                     action TEXT NOT NULL, target_id TEXT, detail_json TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS revoked_sessions (
+                    session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state, created_at);
                 CREATE INDEX IF NOT EXISTS documents_tenant_created ON documents(tenant_id, created_at DESC);
                 """
             )
+
+    def revoke_session(self, session_id: str, expires_at: int) -> None:
+        """Server-side sign-out: a revoked session id is refused until it would have expired."""
+        with self._connect() as db:
+            db.execute("DELETE FROM revoked_sessions WHERE expires_at < ?", (int(time.time()),))
+            db.execute("INSERT OR REPLACE INTO revoked_sessions VALUES (?, ?, ?)", (session_id, int(expires_at), now()))
+
+    def session_revoked(self, session_id: str) -> bool:
+        with self._connect() as db:
+            return db.execute("SELECT 1 FROM revoked_sessions WHERE session_id = ?", (session_id,)).fetchone() is not None
 
     def audit(self, tenant_id: str, actor: str, action: str, target_id: str | None, detail: dict[str, Any]) -> None:
         with self._connect() as db:

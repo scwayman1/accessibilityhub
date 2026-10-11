@@ -1,0 +1,31 @@
+name: Docker image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - requirements.txt
+      - scripts/build_pdfcraft.sh
+      - scripts/install_verapdf.sh
+      - scripts/docker_smoke.sh
+      - service/**
+      - tina/**
+      - check_pdf.py
+      - .github/workflows/docker.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: Build the full-toolchain image
+        run: docker build -t accessibility-hub:ci .
+      - name: Smoke-test the image
+        run: scripts/docker_smoke.sh accessibility-hub:ci
