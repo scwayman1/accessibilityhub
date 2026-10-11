@@ -383,6 +383,26 @@ def build_docmodel(
     }
 
 
+def scanned_pages(payload: bytes) -> list[int]:
+    """Pages with images but no extractable text: candidates for OCR before a rebuild."""
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception:
+        return []
+    if reader.is_encrypted:
+        return []
+    pages = []
+    for number, page in enumerate(reader.pages, start=1):
+        try:
+            has_text = bool((page.extract_text() or "").strip())
+            has_image = bool(list(page.images))
+        except Exception:
+            continue
+        if has_image and not has_text:
+            pages.append(number)
+    return pages
+
+
 def extract_images(payload: bytes, limit: int = 20) -> list[dict[str, Any]]:
     """Extract embedded images (browser-safe base64) so a human can see what
     they are describing. Read-only; never persisted."""

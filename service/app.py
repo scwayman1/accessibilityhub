@@ -18,13 +18,14 @@ from urllib.parse import parse_qs
 from tina.remedy import MetadataRemediation, RemediationError
 from tina.ocr import OcrRemediation
 from tina.structure import StructureRemediation
-from tina.derive import DerivationError, build_docmodel, extract_blocks
+from tina.derive import DerivationError, build_docmodel, extract_blocks, scanned_pages
 from tina.docmodel import DocModelError, apply_figure_decisions, validate_docmodel
 
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
 from service.hardening import RateLimiter, client_address, harden
 from service.repository import StagingRepository, now as repo_now
 from service.settings import ServiceSettings
+from service.toolchain import toolchain_versions as _toolchain_versions
 from service.worker import AssessmentWorker, LANE_ORDER, rasterize_page_png, next_version_name as _next_version_name, split_version as _split_version
 
 TENANT_ID = "coastline-staging"
@@ -547,7 +548,8 @@ def _guided_structure_roles(form: dict[str, str]) -> dict[str, str]:
 
 
 def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str], form: dict[str, str],
-                     problems: list[str], suggested_title: str) -> str:
+                     problems: list[str], suggested_title: str, scans: list[int] | None = None,
+                     ocr_available: bool = False, ocr_requested: bool = False) -> str:
     """The accessible-copy form: title, language, optional structure roles, and
     one human decision per figure. Nothing is pre-described for the person."""
     action = f"/documents/{escape(document_id)}/accessible"
@@ -598,6 +600,36 @@ def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str],
             "<p class=small>Confirm what each block is. Headings and lists you confirm become real structure in both copies.</p>"
             f"<input type=hidden name=block_count value={len(blocks[:MAX_FORM_BLOCKS])}>" + "".join(rows) + "</details>"
         )
+    ocr_section = ""
+    if scans:
+        pages_label = ", ".join(str(page) for page in scans[:12])
+        if not ocr_available:
+            ocr_section = (f"<h2>Scanned pages</h2><p>Page(s) {escape(pages_label)} are images of text. Text recognition is not "
+                           "installed here, so each scanned page is carried as an image you describe.</p>")
+        else:
+            rows = []
+            if ocr_requested:
+                for block in model.get("blocks", []):
+                    if block.get("ocr_index") is None:
+                        continue
+                    index = block["ocr_index"]
+                    value = form.get(f"ocr_{index}", block.get("text", ""))
+                    rows.append(
+                        f"<label for=ocr_{index}>Recognized text, page {escape(str(block.get('page')))}</label>"
+                        f"<textarea id=ocr_{index} name=ocr_{index} rows=2>{escape(value)}</textarea>")
+                rows.append(f"<input type=hidden name=ocr_count value={sum(1 for b in model.get('blocks', []) if b.get('ocr_index') is not None)}>")
+                rows.append("<label class=check><input type=checkbox name=ocr_reviewed value=yes"
+                            f"{' checked' if form.get('ocr_reviewed') == 'yes' else ''}> I checked the recognized text against the page images and corrected it.</label>")
+            ocr_section = (
+                "<h2>Scanned pages</h2>"
+                f"<p>Page(s) {escape(pages_label)} are images of text. Text recognition (OCR) can turn them into real text; "
+                "recognition makes mistakes, so you check and correct every line before it goes into your copies. "
+                "Clear a box to leave that text out.</p>"
+                f"<label class=check><input type=checkbox name=use_ocr value=yes{' checked' if ocr_requested else ''}> "
+                "Recognize the text on scanned pages</label>"
+                + "".join(rows)
+                + ("<p class=small>If the recognized text carries a scanned page's content, you can mark that page's image decorative.</p>" if ocr_requested else "")
+            )
     carried = [(link.get("text"), link.get("href"), block.get("page")) for block in model.get("blocks", [])
                for link in block.get("links") or []]
     links_section = ""
@@ -628,6 +660,7 @@ def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str],
     <form method=post action="{action}">
     <label for=accessible-title>Document title</label><input id=accessible-title name=title value="{escape(title_value)}" required>
     <label for=accessible-language>Primary language</label><input id=accessible-language name=language value="{escape(language_value)}" required>
+    {ocr_section}
     {figure_section}
     {links_section}
     {structure}
@@ -689,6 +722,29 @@ def _with_motion_preference(app: Callable) -> Callable:
         return [body]
 
     return application
+
+
+def _apply_ocr_review(model: dict[str, Any], scans: list[int], form: dict[str, str]) -> dict[str, Any]:
+    """Mark text that came from OCR and apply the person's corrections.
+
+    Each recognized block gets an ``ocr_index``. Once the review form has been
+    shown (``ocr_count`` present), the corrected text replaces the recognized
+    text, an emptied box drops the block, and links no longer in the text drop.
+    """
+    reviewed = bool(form.get("ocr_count"))
+    blocks, index = [], 0
+    for block in model.get("blocks", []):
+        if block.get("page") in scans and block.get("kind") in {"paragraph", "heading"}:
+            block = {**block, "ocr_index": index}
+            index += 1
+            if reviewed:
+                text = " ".join(form.get(f"ocr_{block['ocr_index']}", "").split())
+                if not text:
+                    continue
+                block["text"] = text
+                block["links"] = [link for link in block.get("links") or [] if link.get("text") and link["text"] in text]
+        blocks.append(block)
+    return {**model, "blocks": blocks}
 
 
 def create_app(settings: ServiceSettings | None = None, repository: StagingRepository | None = None, worker: AssessmentWorker | None = None):
@@ -1436,13 +1492,24 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     return [image]
                 if len(pieces) != 3 or method not in {"GET", "POST"}:
                     return _response(start_response, "404 Not Found", not_found)
-                try:
-                    blocks = extract_blocks(source)
-                except DerivationError:
-                    blocks = []
                 suggested = _suggested_title(document["filename"], document["source_kind"])
                 shell = (lambda inner: _educator_shell(inner, persona)) if educator else (lambda inner: _app_shell("improve", inner, signed_in, dev, persona))
                 form = _form(environ) if method == "POST" else {}
+                scans = scanned_pages(source)
+                ocr_available = bool(scans) and bool(_toolchain_versions().get("tesseract"))
+                ocr_requested = ocr_available and form.get("use_ocr") == "yes"
+                ocr_problems: list[str] = []
+                model_source = source
+                if ocr_requested:
+                    try:
+                        model_source, _ocr_report = OcrRemediation.with_builtin_tools().apply(document["filename"], source)
+                    except RemediationError as error:
+                        ocr_problems.append(f"Text recognition did not run: {error}")
+                        ocr_requested = False
+                try:
+                    blocks = extract_blocks(model_source)
+                except DerivationError:
+                    blocks = []
                 roles = None
                 if form.get("block_count"):
                     try:
@@ -1450,12 +1517,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     except RemediationError:
                         roles = None
                 try:
-                    model = build_docmodel(source, roles=roles, title=form.get("title"), language=form.get("language"))
+                    model = build_docmodel(model_source, roles=roles, title=form.get("title"), language=form.get("language"))
+                    if ocr_requested:
+                        model = _apply_ocr_review(model, scans, form)
                 except DerivationError as error:
                     inner = f"<div class=workspace-inner><section class=locked><h2>Accessible copies are not available for this document.</h2><p>{escape(str(error))}</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"
                     return _response(start_response, "400 Bad Request", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
                 if method == "GET":
-                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, {}, [], suggested)}</div></div>"
+                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, {}, [], suggested, scans, ocr_available)}</div></div>"
                     return _response(start_response, "200 OK", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
                 decisions = {}
                 for block in model["blocks"]:
@@ -1466,10 +1535,12 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         else:
                             decisions[number] = {"alt": form.get(f"fig_{number}_alt", "")}
                 model = apply_figure_decisions(model, decisions)
-                problems = validate_docmodel(model)
+                problems = ocr_problems + validate_docmodel(model)
+                if ocr_requested and (form.get("ocr_reviewed") != "yes" or not form.get("ocr_count")):
+                    problems.insert(0, "Check the recognized text against the page images, correct it, and confirm before producing copies.")
                 output_format = form.get("format") if form.get("format") in {"html", "pdf"} else "html"
                 if problems:
-                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, form, problems, suggested)}</div></div>"
+                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, form, problems, suggested, scans, ocr_available, ocr_requested)}</div></div>"
                     return _response(start_response, "422 Unprocessable Entity", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
                 improvements: list[str] = []
                 node: dict[str, Any] | None = document
@@ -1481,6 +1552,8 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                             improvements.append(REMEDIATION_LABELS.get(row["kind"], row["kind"]))
                     parent_id = node.get("parent_document_id")
                     node = repository.document(TENANT_ID, parent_id) if parent_id else None
+                if ocr_requested:
+                    improvements.append("Text recognized from scanned pages, checked and corrected by a person")
                 improvements += ["Rebuilt with confirmed structure and image decisions"]
                 try:
                     from tina.author import AccessiblePackageProducer

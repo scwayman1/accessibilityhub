@@ -390,6 +390,34 @@ class ServiceAccessibleCopyTests(unittest.TestCase):
         self.assertTrue(status.startswith("200"), status)
         self.assertIn(("/Figure", "Scanned handout page: Week 3 reading list"), struct_tags(body))
 
+    def test_scanned_pages_can_be_recognized_reviewed_and_corrected(self):
+        import shutil
+
+        if not shutil.which("tesseract"):
+            self.skipTest("tesseract is not installed")
+        document_id = self.start("scan")
+        status, _, page = self.request(f"/documents/{document_id}/accessible")
+        self.assertIn(b"Recognize the text on scanned pages", page)
+        base = {"title": "Week 3 field notes", "language": "en-US", "format": "pdf", "use_ocr": "yes",
+                "fig_1_choice": "decorative"}
+        # First pass: recognition runs, and the person must check the text before anything is produced.
+        status, _, page = self.request(f"/documents/{document_id}/accessible", "POST", base)
+        self.assertTrue(status.startswith("422"), status)
+        self.assertIn(b"Check the recognized text", page)
+        self.assertIn(b"name=ocr_0", page)
+        self.assertIn(b"Week 3 field notes", page)
+        count = int(re.search(rb"name=ocr_count value=(\d+)", page).group(1))
+        self.assertGreaterEqual(count, 1)
+        corrected = {f"ocr_{i}": "" for i in range(count)}
+        corrected["ocr_0"] = "Week 3 field notes (corrected by the instructor)"
+        status, headers, body = self.request(f"/documents/{document_id}/accessible", "POST",
+                                             {**base, **corrected, "ocr_count": str(count), "ocr_reviewed": "yes"})
+        self.assertTrue(status.startswith("200"), status)
+        text = "".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(body)).pages)
+        self.assertIn("Week 3 field notes (corrected by the instructor)", text)
+        self.assertIn("checked and corrected by a person", text)
+        self.assertNotIn("Synthetic scanned handout", text)  # emptied boxes are left out
+
     def test_hosted_staging_keeps_accessible_copies_closed_unless_enabled(self):
         from service.settings import ServiceSettings
 
