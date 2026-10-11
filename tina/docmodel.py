@@ -109,8 +109,9 @@ def validate_docmodel(model: Any) -> list[str]:
                 problems.append(f"{where} figure is marked decorative and also described; choose one.")
             elif not decorative and not alt:
                 page = block.get("page")
+                label = f"Image {block['figure']}" if block.get("figure") else f"{where} image"
                 problems.append(
-                    f"{where} figure{f' (page {page})' if page else ''} needs a description or a decorative decision from a person."
+                    f"{label}{f' (page {page})' if page else ''} needs a description or a decorative decision from a person."
                 )
             if len(alt) > MAX_ALT_LENGTH:
                 problems.append(f"{where} figure description is longer than {MAX_ALT_LENGTH} characters.")

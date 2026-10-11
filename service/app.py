@@ -24,7 +24,7 @@ from tina.docmodel import DocModelError, apply_figure_decisions, validate_docmod
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
 from service.repository import StagingRepository, now as repo_now
 from service.settings import ServiceSettings
-from service.worker import AssessmentWorker, LANE_ORDER, next_version_name as _next_version_name, split_version as _split_version
+from service.worker import AssessmentWorker, LANE_ORDER, rasterize_page_png, next_version_name as _next_version_name, split_version as _split_version
 
 TENANT_ID = "coastline-staging"
 ACTOR_ID = "staging-educator"
@@ -37,7 +37,7 @@ LANE_PRESENTATION = {
 }
 STATE_LABELS = {"queued": "Review queued", "running": "Review in progress", "succeeded": "Review complete", "failed": "Review did not complete"}
 SOURCE_LABELS = {"bundled_synthetic_fixture": "Supplied sample", "synthetic_remediated_copy": "Improved copy", "educator_upload": "Your upload"}
-REMEDIATION_LABELS = {"metadata": "Title & language", "structure": "Tag structure", "ocr": "Text layer (OCR)", "seal": "Review summary page"}
+REMEDIATION_LABELS = {"metadata": "Title & language", "structure": "Tag structure", "ocr": "Text layer (OCR)", "figures": "Image descriptions", "seal": "Review summary page"}
 SUMMARY_PHRASES = {"needs_attention": ("needs attention", "need attention"), "review_recommended": ("to review", "to review"), "verified_signal": ("verified", "verified"), "not_assessed": ("not assessed", "not assessed")}
 SSO_ACTOR = "jordan-rivera"
 SSO_DISPLAY = "Jordan Rivera, Faculty"
@@ -46,6 +46,7 @@ UPLOAD_READ_CAP = MAX_UPLOAD_BYTES + 2 * 1024 * 1024  # payload plus multipart f
 PARTNER_ADS_PATH = Path(__file__).resolve().parents[1] / "partner_ads.json"
 STRUCTURE_ROLES = (("h1", "Heading level 1"), ("h2", "Heading level 2"), ("h3", "Heading level 3"), ("p", "Paragraph"), ("li", "List item"))
 MAX_FORM_BLOCKS = 80
+MAX_PREVIEW_PAGES = 12
 
 _FALLBACK_FAVICON = (
     b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
@@ -294,6 +295,7 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .document-layout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; align-items:start } .signal { display:grid; grid-template-columns:152px minmax(0,1fr); gap:18px; padding:20px 0; border-bottom:1px solid var(--line) } .signal:last-of-type { border-bottom:0 } .signal-heading { display:flex; align-items:center; gap:9px } .signal-icon { flex:0 0 auto; display:grid; place-items:center; width:25px; height:25px; border:1px solid currentColor; border-radius:50%; font-weight:900; line-height:1 } .chip { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; padding:5px 10px; border:1px solid currentColor; border-radius:999px; font-size:10px; font-weight:850; letter-spacing:.055em; line-height:1.1; text-transform:uppercase } .needs_attention .chip { background:var(--attention-soft) } .review_recommended .chip { background:var(--review-soft) } .verified_signal .chip { background:var(--success-soft) } .not_assessed .chip { background:var(--neutral-soft) } .needs_attention .chip,.needs_attention .signal-icon { color:var(--attention) } .review_recommended .chip,.review_recommended .signal-icon { color:var(--review) } .verified_signal .chip,.verified_signal .signal-icon { color:var(--success) } .not_assessed .chip,.not_assessed .signal-icon { color:var(--neutral) } .signal p { margin-top:5px; color:var(--muted); font-size:13px }
     .fixlab { position:sticky; top:24px; padding:24px; border:1px solid var(--line); border-top:4px solid var(--brand); border-radius:16px; background:white; box-shadow:var(--shadow) } .fixlab h2 { font-size:22px } .fixlab p { margin-top:7px; color:var(--muted); font-size:13px } label { display:block; margin:15px 0 6px; color:var(--ink); font-size:13px; font-weight:760 } input,select { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--line-strong); border-radius:10px; background:white } input[type=checkbox] { width:auto; margin-right:7px } details { margin-top:12px; padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } summary { color:var(--ink); cursor:pointer; font-weight:760 } .advanced { margin-top:18px }
     .completeness { border-style:dashed; background:var(--wash) } .completeness ul { margin:8px 0 0; padding-left:19px; color:var(--muted); font-size:12px } .completeness li { margin:4px 0 }
+    .figure-decision { margin:14px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:white } .figure-decision legend { font-weight:700; padding:0 6px } .figure-decision label { display:flex; align-items:center; gap:8px; margin:8px 0 4px } .figure-decision input[type=radio] { width:auto; min-height:0; margin:0; flex:none } .figure-decision textarea { width:100%; box-sizing:border-box; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px } .figure-preview { display:block; max-width:min(100%,360px); max-height:260px; margin:6px 0; border:1px solid var(--line); border-radius:8px } .page-previews figure { display:inline-block; margin:8px 10px 8px 0; vertical-align:top } .page-previews img { width:180px; height:auto; border:1px solid var(--line); border-radius:6px } .page-previews figcaption { font-size:12px; color:var(--muted) } #accessible-errors { border-left:4px solid var(--attention); padding:10px 14px; margin:14px 0; background:var(--attention-soft) }
     .block-row { margin:10px 0; padding:9px 11px; border:1px solid var(--line); border-radius:10px; background:white } .block-row label { margin:0 0 4px; font-size:11px; letter-spacing:.09em; text-transform:uppercase } .block-row select { min-height:36px; padding:6px 8px; font-size:13px } .block-preview { display:block; margin-top:5px; color:var(--muted); font-size:12px }
     .progress-card { max-width:760px; margin:34px auto; padding:38px; text-align:center } .progress-orb { position:relative; display:grid; place-items:center; width:72px; height:72px; margin:0 auto 20px; border:8px solid var(--blush); border-top-color:var(--brand); border-radius:50%; animation:spin 1.1s linear infinite } .progress-orb:after { content:""; width:26px; height:34px; border:2px solid var(--brand-deep); border-radius:6px; background:white } .progress-list { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:26px 0 0; padding:0; list-style:none; text-align:left } .progress-list li { padding:13px; color:var(--muted); border:1px solid var(--line); border-radius:12px; background:var(--wash); font-size:12px } .progress-list li strong { display:block; color:var(--ink); font-size:13px } .progress-list li.active { border-color:var(--blush-line); background:var(--blush) } .progress-list li.done { border-color:var(--success-line); background:var(--success-soft) } .progress-list li.done strong { color:var(--success) }
     .completion { display:flex; gap:14px; align-items:flex-start; margin-bottom:20px; padding:20px 22px; color:var(--success); border:1px solid var(--success-line); border-radius:16px; background:var(--success-soft) } .completion-mark { flex:0 0 auto; display:grid; place-items:center; width:36px; height:36px; color:white; border-radius:12px; background:var(--success); font-weight:900 } .completion h2 { color:var(--success); font-size:21px } .completion p { margin-top:4px; color:var(--success) }
@@ -486,6 +488,50 @@ def _structure_fix(document_id: str, blocks: list[str]) -> str:
     )
 
 
+def _tagged_figure_fix(document_id: str, source: bytes) -> str:
+    """Describe-or-decorative form for the figures of an already-tagged PDF.
+
+    The Hub's own structure tool declines tagged PDFs; PdfCraft can attach a
+    person's descriptions to their existing Figure elements. Absent PdfCraft,
+    an untagged PDF, or no figures, this renders nothing.
+    """
+    try:
+        from pypdf import PdfReader
+        import io as _io
+
+        if "/StructTreeRoot" not in PdfReader(_io.BytesIO(source), strict=False).trailer["/Root"]:
+            return ""
+        from tina.pdfcraft import PdfCraft
+
+        craft = PdfCraft.with_builtin_tools()
+        if not craft.available:
+            return ""
+        figures = craft.list_figures(source)[:MAX_FORM_BLOCKS]
+    except Exception:
+        return ""
+    if not figures:
+        return ""
+    rows = []
+    for figure in figures:
+        position = figure["position"]
+        current = str(figure.get("alt") or "")
+        rows.append(
+            f"<fieldset class=figure-decision><legend>Tagged image {position} (page {escape(str(figure.get('page')))})</legend>"
+            + (f"<p class=small>Current description: “{escape(current)}”</p>" if current else "<p class=small>No description yet.</p>")
+            + f"<label><input type=radio name=fig_{position}_choice value=keep checked> Keep as is</label>"
+            f"<label><input type=radio name=fig_{position}_choice value=describe> Describe it</label>"
+            f"<label for=tfig_{position}_alt>Description</label><textarea id=tfig_{position}_alt name=fig_{position}_alt rows=2 maxlength=1000></textarea>"
+            f"<label><input type=radio name=fig_{position}_choice value=decorative> It is decorative</label></fieldset>"
+        )
+    return (
+        "<details><summary>Describe images in this tagged PDF</summary>"
+        "<p class=small>This copy already has tags. Write what each image tells a reader, or mark it decorative; the change is applied to a new copy and rechecked.</p>"
+        f"<form method=post action=\"/documents/{escape(document_id)}/remediate/figures\">"
+        f"<input type=hidden name=figure_count value={len(figures)}>" + "".join(rows)
+        + "<div class=actions><button class=secondary>Apply descriptions and recheck</button></div></form></details>"
+    )
+
+
 def _guided_structure_roles(form: dict[str, str]) -> dict[str, str]:
     try:
         count = int(form.get("block_count", ""))
@@ -547,11 +593,24 @@ def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str],
             "<p class=small>Confirm what each block is. Headings and lists you confirm become real structure in both copies.</p>"
             f"<input type=hidden name=block_count value={len(blocks[:MAX_FORM_BLOCKS])}>" + "".join(rows) + "</details>"
         )
+    pages = sorted({int(block.get("page") or 0) for block in model.get("blocks", []) if block.get("page")})[:MAX_PREVIEW_PAGES]
+    page_previews = ""
+    if pages:
+        page_previews = (
+            "<details class=page-previews><summary>See the original pages</summary>"
+            "<p class=small>Compare with the original while you confirm headings and describe images.</p>"
+            + "".join(
+                f'<figure><img loading=lazy src="/documents/{escape(document_id)}/page/{page}.png" '
+                f'alt="Page {page} of the original document, for visual comparison"><figcaption>Page {page}</figcaption></figure>'
+                for page in pages)
+            + "</details>"
+        )
     return f'''<section class=panel aria-labelledby=accessible-heading>
     <p class=eyebrow>Accessible copies</p>
     <h1 id=accessible-heading>Get an accessible HTML page and a tagged PDF</h1>
     <p class=lead>We rebuild your document from the structure and image descriptions you confirm, then recheck the new PDF with the same checker. The layout is re-flowed, not a pixel copy of the original.</p>
     {error_list}
+    {page_previews}
     <form method=post action="{action}">
     <label for=accessible-title>Document title</label><input id=accessible-title name=title value="{escape(title_value)}" required>
     <label for=accessible-language>Primary language</label><input id=accessible-language name=language value="{escape(language_value)}" required>
@@ -1233,7 +1292,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     one_click = ""
                     if metadata_defects:
                         one_click = f'''<form method=post action="/documents/{escape(document_id)}/remediate/metadata"><input type=hidden name=title value="{escape(suggested)}"><input type=hidden name=language value="en-US"><div class=actions><button>Apply suggested fixes and recheck <span aria-hidden=true>→</span></button></div></form><p class=small>One click sets the title to “{escape(suggested)}” and the language to English (US) in a new copy, then rechecks it.</p><div class=login-divider aria-hidden=true>or</div>'''
-                    fixlab = f'''<aside class=fixlab aria-labelledby=fix-heading><p class=eyebrow>3 · Improve</p><h2 id=fix-heading>Fix the clearest issues</h2><p>Add a meaningful title and primary language, then run the check again on a copy.</p>{one_click}<form method=post action="/documents/{escape(document_id)}/remediate/metadata"><label for=document-title>Document title</label><input id=document-title name=title value="{escape(suggested)}" required><label for=document-language>Primary language</label><input id=document-language name=language value="en-US" required><div class=actions><button class={'secondary' if one_click else 'primary'}>Apply and recheck <span aria-hidden=true>→</span></button></div></form><div class=advanced>{_structure_fix(document_id, blocks)}{ocr_action}{cleanup}</div><p class=small>Each recheck creates a new version and keeps the source record intact.</p></aside>'''
+                    fixlab = f'''<aside class=fixlab aria-labelledby=fix-heading><p class=eyebrow>3 · Improve</p><h2 id=fix-heading>Fix the clearest issues</h2><p>Add a meaningful title and primary language, then run the check again on a copy.</p>{one_click}<form method=post action="/documents/{escape(document_id)}/remediate/metadata"><label for=document-title>Document title</label><input id=document-title name=title value="{escape(suggested)}" required><label for=document-language>Primary language</label><input id=document-language name=language value="en-US" required><div class=actions><button class={'secondary' if one_click else 'primary'}>Apply and recheck <span aria-hidden=true>→</span></button></div></form><div class=advanced>{_structure_fix(document_id, blocks)}{_tagged_figure_fix(document_id, repository.document_bytes(TENANT_ID, document_id))}{ocr_action}{cleanup}</div><p class=small>Each recheck creates a new version and keeps the source record intact.</p></aside>'''
                 else:
                     parent_link = f'<a class="button secondary" href="/documents/{escape(document["parent_document_id"])}">View original sample</a>' if is_recheck else '<a class="button secondary" href="/app">Start another sample</a>'
                     fixlab = f'''<aside class=fixlab><p class=eyebrow>Next step</p><h2>{'Compare the result' if is_recheck else 'Try another sample'}</h2><p>{'The rechecked copy is stored as a separate version of the same lineage.' if is_recheck else 'This assessment did not complete, so no fixes were applied.'}</p><div class=actions>{parent_link}<a class="button secondary" href="/app">Workspace</a></div><div class=advanced>{cleanup}</div></aside>'''
@@ -1241,7 +1300,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 layout_class = "document-layout arrive a4" if hosted_reveal else "document-layout"
                 content = f'''<div class=workspace-inner>{sprite}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else 'Synthetic demo only'}</span></header>{completion}{improved_story}{summary_row}{produce_card}<div class="{layout_class}">{findings}{fixlab}</div></div>'''
                 return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", _app_shell("check" if is_recheck else "improve", content, signed_in, dev, persona), refresh_head))
-            if len(pieces) in (3, 4) and pieces[2] in {"accessible", "figure"}:
+            if len(pieces) in (3, 4) and pieces[2] in {"accessible", "figure", "page"}:
                 # Accessible HTML + tagged PDF, re-authored from human-confirmed
                 # structure and figure decisions. Behind the login wall already;
                 # hosted environments keep it closed until HUB_ENABLE_PRODUCE.
@@ -1261,6 +1320,17 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         return _response(start_response, "404 Not Found", not_found)
                     image = base64.b64decode(figure["base64"])
                     start_response("200 OK", [("Content-Type", figure["mime"]), ("Content-Length", str(len(image))),
+                                              ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
+                    return [image]
+                if pieces[2] == "page":
+                    try:
+                        number = int(pieces[3].removesuffix(".png")) if len(pieces) == 4 else 0
+                    except ValueError:
+                        number = 0
+                    image = rasterize_page_png(source, number, 520) if 1 <= number <= MAX_PREVIEW_PAGES else None
+                    if image is None:
+                        return _response(start_response, "404 Not Found", not_found)
+                    start_response("200 OK", [("Content-Type", "image/png"), ("Content-Length", str(len(image))),
                                               ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
                     return [image]
                 if len(pieces) != 3 or method not in {"GET", "POST"}:
@@ -1418,6 +1488,24 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                             roles = _guided_structure_roles(form)
                             order = None  # Reading order defaults to the page order shown in the form.
                         fixed, provenance = StructureRemediation.with_builtin_tools().apply(document["filename"], source, confirmed_roles=roles, reading_order=order)
+                    elif kind == "figures":
+                        from tina.pdfcraft import PdfCraft, PdfCraftUnavailable
+
+                        try:
+                            count = max(0, min(int(form.get("figure_count", "0")), MAX_FORM_BLOCKS))
+                        except ValueError:
+                            raise RemediationError("The image form was incomplete. Return to the document and try again.")
+                        decisions: dict[str, dict[str, Any]] = {}
+                        for position in range(1, count + 1):
+                            choice = form.get(f"fig_{position}_choice", "keep")
+                            if choice == "decorative":
+                                decisions[str(position)] = {"decorative": True}
+                            elif choice == "describe":
+                                decisions[str(position)] = {"alt": form.get(f"fig_{position}_alt", "")}
+                        try:
+                            fixed, provenance = PdfCraft.with_builtin_tools().apply_semantics(document["filename"], source, figures=decisions)
+                        except PdfCraftUnavailable:
+                            raise RemediationError("Describing images in tagged PDFs needs PdfCraft, which is not installed in this environment.")
                     elif kind == "ocr":
                         if form.get("confirmed") != "yes":
                             raise RemediationError("Confirm that you will review generated text before adding a text layer.")

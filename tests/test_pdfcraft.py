@@ -196,5 +196,67 @@ class RealBinaryTests(unittest.TestCase):
         self.assertEqual(flagged[0]["category"], "advisory")  # routes to review, never a verdict
 
 
+@unittest.skipUnless(REAL_BINARY, "pdfcraft-cli is not installed (scripts/build_pdfcraft.sh)")
+class ServiceTaggedFigureTests(unittest.TestCase):
+    def test_tagged_pdf_figures_are_described_on_a_new_copy(self):
+        import time
+        from urllib.parse import urlencode
+
+        try:
+            from tina.author import render_pdf
+        except ImportError:  # pragma: no cover
+            self.skipTest("WeasyPrint is not installed")
+        from service.app import create_app
+        from service.repository import StagingRepository
+        from service.settings import ServiceSettings
+        from service.worker import AssessmentWorker
+        from tests.test_author import full_model, struct_tags
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = ServiceSettings("development", Path(directory), "synthetic-only-code", "s" * 48, ())
+            repository = StagingRepository(settings.data_dir)
+            worker = AssessmentWorker(repository)
+            app = create_app(settings, repository, worker)
+            try:
+                cookie = {"value": ""}
+
+                def request(path, method="GET", form=None):
+                    body = urlencode(form or {}).encode()
+                    captured = {}
+
+                    def start_response(status, headers):
+                        captured["status"], captured["headers"] = status, dict(headers)
+
+                    response = b"".join(app({
+                        "REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": "",
+                        "CONTENT_LENGTH": str(len(body)), "CONTENT_TYPE": "application/x-www-form-urlencoded",
+                        "wsgi.input": io.BytesIO(body), "HTTP_COOKIE": cookie["value"],
+                    }, start_response))
+                    return captured["status"], captured["headers"], response
+
+                _, headers, _ = request("/login", "POST", {"code": "synthetic-only-code"})
+                cookie["value"] = headers["Set-Cookie"].split(";", 1)[0]
+                document = repository.create_document("coastline-staging", "syllabus.pdf", "bundled_synthetic_fixture", render_pdf(full_model()))
+                repository.enqueue(document["id"], kind="assessment")
+                for _ in range(200):
+                    job = repository.latest_job("coastline-staging", document["id"])
+                    if job and job["state"] in {"succeeded", "failed"}:
+                        break
+                    time.sleep(0.05)
+                status, _, page = request(f"/documents/{document['id']}")
+                self.assertIn(b"Describe images in this tagged PDF", page)
+                self.assertIn("Current description: “Bar chart: essays outweigh quizzes”".encode(), page)
+                status, headers, _ = request(f"/documents/{document['id']}/remediate/figures", "POST", {
+                    "figure_count": "1", "fig_1_choice": "describe", "fig_1_alt": "Essays count for 40 percent",
+                })
+                self.assertTrue(status.startswith("303"), status)
+                child_id = headers["Location"].rsplit("/", 1)[-1]
+                child = repository.document_bytes("coastline-staging", child_id)
+                self.assertIn(("/Figure", "Essays count for 40 percent"), struct_tags(child))
+                self.assertEqual(repository.document_bytes("coastline-staging", document["id"])[:4], b"%PDF")
+            finally:
+                worker.stop()
+
+
 if __name__ == "__main__":
     unittest.main()
