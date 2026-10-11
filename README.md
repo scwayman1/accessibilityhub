@@ -149,7 +149,7 @@ image is undecided.
 
 [PdfCraft](https://github.com/storytold/pdfcraft) is the open-source,
 Acrobat-comparable PDF workbench from the ArtCraft suite (MIT OR Apache-2.0).
-To build the pinned CLI (needs Rust 1.90 or newer and a C compiler):
+To build the pinned CLI (needs Rust 1.94 or newer and a C compiler):
 
 ```sh
 scripts/build_pdfcraft.sh            # -> vendor-bin/pdfcraft-cli (or set PDFCRAFT_BIN)

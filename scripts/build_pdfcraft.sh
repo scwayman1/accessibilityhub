@@ -8,7 +8,8 @@
 # PdfCraft (https://github.com/storytold/pdfcraft) is MIT OR Apache-2.0. The
 # Hub pins one reviewed commit; bump PDFCRAFT_REV deliberately, re-run the
 # real-binary tests (tests/test_pdfcraft.py), and record the bump in
-# docs/progress-ledger.md. Needs Rust >= 1.90 and a C compiler (aws-lc-sys).
+# docs/progress-ledger.md. Needs Rust >= 1.94 (the pinned lockfile's
+# dependencies need it, though PdfCraft declares 1.90) and a C compiler.
 # The tool itself never touches the network once built.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,7 +19,7 @@ PDFCRAFT_REV="${PDFCRAFT_REV:-bbbe60015c571ebfc39708ee07777b89e267122a}"
 PDFCRAFT_SRC="${PDFCRAFT_SRC:-$PWD/.pdfcraft-src}"
 OUT_DIR="${OUT_DIR:-$PWD/vendor-bin}"
 
-command -v cargo >/dev/null 2>&1 || { echo "cargo not found: install Rust >= 1.90 (https://rustup.rs)" >&2; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "cargo not found: install Rust >= 1.94 (https://rustup.rs)" >&2; exit 1; }
 
 if [ ! -d "$PDFCRAFT_SRC/.git" ]; then
   git init -q "$PDFCRAFT_SRC"

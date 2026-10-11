@@ -12,11 +12,13 @@
 # attach a persistent disk mounted at /var/data (HUB_DATA_DIR) so records
 # survive deploys. CI builds and smoke-tests this image (.github/workflows/docker.yml).
 
-FROM rust:1.90-bookworm AS pdfcraft
+# PdfCraft declares rust-version 1.90, but its pinned lockfile needs 1.94+
+# (rten, hayro, boa); 1.97 is the version the pinned build is verified with.
+# The full Rust image already carries git and a C compiler for aws-lc-sys.
+FROM rust:1.97-bookworm AS pdfcraft
 WORKDIR /build
 COPY scripts/build_pdfcraft.sh scripts/build_pdfcraft.sh
-RUN apt-get update && apt-get install -y --no-install-recommends git clang && rm -rf /var/lib/apt/lists/* \
- && OUT_DIR=/build/vendor-bin PDFCRAFT_SRC=/build/pdfcraft-src scripts/build_pdfcraft.sh
+RUN OUT_DIR=/build/vendor-bin PDFCRAFT_SRC=/build/pdfcraft-src scripts/build_pdfcraft.sh
 
 FROM maven:3.9-eclipse-temurin-17 AS verapdf
 WORKDIR /build
