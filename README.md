@@ -1,5 +1,7 @@
 # Coastline College Accessibility Hub
 
+Agent development and release checks: [docs/agent-devops.md](docs/agent-devops.md).
+
 A document accessibility reviewer built for educators, on one honest loop:
 **Review → Understand → Improve → Verify.**
 
