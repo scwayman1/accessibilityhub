@@ -10,16 +10,21 @@ NAME="hub-smoke-$$"
 
 echo "== toolchain inside the image"
 docker run --rm "$IMAGE" python -m service.toolchain
-docker run --rm "$IMAGE" python - <<'PY'
+# Each check must print its marker line, so a check that silently ran nothing
+# (for example, stdin not reaching the container) fails the smoke test.
+out="$(docker run --rm -i "$IMAGE" python - <<'PY'
 from service.toolchain import toolchain_versions
 versions = toolchain_versions()
 missing = [name for name in ("qpdf", "tesseract", "pdftoppm", "pdfcraft", "verapdf") if not versions.get(name)]
 assert not missing, f"tools missing from the image: {missing}"
 print("all document tools present:", ", ".join(sorted(versions)))
 PY
+)"
+echo "$out"
+grep -q "all document tools present" <<<"$out"
 
 echo "== produce and validate an accessible copy inside the image"
-docker run --rm "$IMAGE" python - <<'PY'
+out="$(docker run --rm -i "$IMAGE" python - <<'PY'
 import tempfile
 from pathlib import Path
 
@@ -44,6 +49,9 @@ assert not failed, f"PdfCraft failures on our own output: {failed}"
 assert check["verapdf"]["runner"] == "local" and not check["verapdf"]["failed_rules"], check["verapdf"]
 print("produced copy: no Needs-attention, no PdfCraft failures, no failed veraPDF UA-1 clauses")
 PY
+)"
+echo "$out"
+grep -q "produced copy: no Needs-attention" <<<"$out"
 
 echo "== service answers /healthz"
 docker run -d --name "$NAME" -p 18000:8000 -e HUB_ENV=development \

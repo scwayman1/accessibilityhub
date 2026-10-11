@@ -64,7 +64,8 @@ def tool_missing(result: dict[str, Any]) -> bool:
 def command_version(command: list[str]) -> str | None:
     result = run(command, timeout=10)
     if result["returncode"] == 0:
-        return (result["stdout"] or result["stderr"]).strip().splitlines()[0]
+        lines = (result["stdout"] or result["stderr"] or "").strip().splitlines()
+        return lines[0] if lines else None  # a tool that answers with nothing has no version line
     return None
 
 

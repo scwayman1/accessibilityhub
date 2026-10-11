@@ -83,5 +83,13 @@ class RealValidatorTests(unittest.TestCase):
         self.assertTrue(result["failed_rules"])
 
 
+class CommandVersionTests(unittest.TestCase):
+    def test_a_silent_tool_has_no_version_instead_of_crashing_the_review(self):
+        with mock.patch.object(check_pdf, "run", return_value={"returncode": 0, "stdout": "", "stderr": ""}):
+            self.assertIsNone(check_pdf.command_version(["sometool", "--version"]))
+        with mock.patch.object(check_pdf, "run", return_value={"returncode": 0, "stdout": "tool 1.2\nmore", "stderr": ""}):
+            self.assertEqual(check_pdf.command_version(["sometool", "--version"]), "tool 1.2")
+
+
 if __name__ == "__main__":
     unittest.main()
