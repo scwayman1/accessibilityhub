@@ -100,6 +100,7 @@ class OutcomeLanguageGovernanceTests(unittest.TestCase):
         "tina/ocr.py",
         "tina/docmodel.py",
         "tina/author.py",
+        "tina/pdfcraft.py",
         "foundation_ads.json",
         "lesson_content.json",
     ]

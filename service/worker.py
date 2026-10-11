@@ -184,6 +184,9 @@ def normalize_report(report: dict[str, Any]) -> dict[str, Any]:
             "evidence": item.get("evidence"), "next_action": "Keep this document detail in place.",
             "educator_context": False, "location": "machine evidence",
         })
+    second = report.get("second_opinion")
+    if isinstance(second, dict) and second.get("available") is False and report.get("findings") is not None:
+        completeness.append("The second-opinion checker (PdfCraft) isn't available in this environment, so that check was not run.")
     # The report's own honesty list, in full — including color-only meaning.
     # Toolchain entries are already covered by the completeness notes above.
     for item in report.get("not_assessed", []):

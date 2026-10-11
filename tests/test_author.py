@@ -203,6 +203,32 @@ class RenderPdfTests(unittest.TestCase):
                 keys = set(descriptor.get_object().keys())
                 self.assertTrue(keys & {"/FontFile", "/FontFile2", "/FontFile3"}, font.get("/BaseFont"))
 
+    def test_tables_carry_a_summary_from_their_caption(self):
+        root = self.reader.trailer["/Root"]["/StructTreeRoot"].get_object()
+        summaries = []
+
+        def walk(node):
+            node = node.get_object() if hasattr(node, "get_object") else node
+            if isinstance(node, dict) and "/S" in node:
+                if node["/S"] == "/Table":
+                    summaries.append(str(node["/A"]["/Summary"]))
+                kids = node.get("/K")
+                for kid in kids if isinstance(kids, list) else ([kids] if kids is not None else []):
+                    walk(kid)
+
+        walk(root["/K"] if not isinstance(root["/K"], list) else root["/K"][0])
+        self.assertEqual(summaries, ["Weights"])
+
+    def test_pdfcraft_second_opinion_finds_no_failures_in_our_output(self):
+        from tina.pdfcraft import PdfCraft
+
+        craft = PdfCraft.with_builtin_tools()
+        if not craft.available:
+            self.skipTest("pdfcraft-cli is not installed")
+        result = craft.check(self.pdf)
+        failed = [(item["rule"], item["findings"]) for item in result["results"] if item["status"] == "failed"]
+        self.assertEqual(failed, [])
+
     def test_decorative_image_is_drawn_as_an_artifact(self):
         contents = b"".join(page.get_contents().get_data() for page in self.reader.pages)
         self.assertIn(b"/Artifact", contents)

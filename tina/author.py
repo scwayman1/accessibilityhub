@@ -21,6 +21,7 @@ text, infers structure, or claims conformance.
 from __future__ import annotations
 
 import html
+import io
 import tempfile
 from datetime import date
 from hashlib import sha256
@@ -156,7 +157,7 @@ def render_pdf(model: dict[str, Any], summary: dict[str, Any] | None = None) -> 
     fetcher = URLFetcher(allowed_protocols={"data"}, fail_on_errors=True)
     try:
         document = weasyprint.HTML(string=markup, url_fetcher=fetcher)
-        return document.write_pdf(
+        pdf_bytes = document.write_pdf(
             pdf_variant="pdf/ua-1",
             custom_metadata=True,
             pdf_identifier=sha256(markup.encode("utf-8")).hexdigest()[:32].encode("ascii"),
@@ -165,6 +166,47 @@ def render_pdf(model: dict[str, Any], summary: dict[str, Any] | None = None) -> 
         # A BaseException in WeasyPrint: convert it so no caller's
         # ``except Exception`` boundary is bypassed.
         raise RuntimeError("The document referenced a resource outside the document; nothing was fetched.") from error
+    captions = [str(block.get("caption") or "").strip() for block in model["blocks"] if block["kind"] == "table"]
+    return _attach_table_summaries(pdf_bytes, captions) if any(captions) else pdf_bytes
+
+
+def _attach_table_summaries(pdf_bytes: bytes, captions: list[str]) -> bytes:
+    """Give each tagged Table a /Summary attribute from its human-written caption.
+
+    Acrobat-style checkers expect a table summary; WeasyPrint tags <caption>
+    but writes no /Summary. Tables are matched in document order, and a table
+    without a caption is left as is so a checker can still flag it.
+    """
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import DictionaryObject, NameObject, TextStringObject
+
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(pdf_bytes)))
+    tables: list[Any] = []
+
+    def walk(node: Any) -> None:
+        node = node.get_object() if hasattr(node, "get_object") else node
+        if isinstance(node, dict) and node.get("/S") is not None:
+            if node.get("/S") == "/Table":
+                tables.append(node)
+            kids = node.get("/K")
+            for kid in kids if isinstance(kids, list) else ([kids] if kids is not None else []):
+                walk(kid)
+
+    tree = writer._root_object["/StructTreeRoot"].get_object()
+    kids = tree.get("/K")
+    for kid in kids if isinstance(kids, list) else ([kids] if kids is not None else []):
+        walk(kid)
+    if len(tables) != len(captions):
+        return pdf_bytes  # Never guess which caption belongs to which table.
+    for table, caption in zip(tables, captions):
+        if caption:
+            table[NameObject("/A")] = DictionaryObject({
+                NameObject("/O"): NameObject("/Table"),
+                NameObject("/Summary"): TextStringObject(caption),
+            })
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 def self_check(pdf_bytes: bytes) -> dict[str, Any]:

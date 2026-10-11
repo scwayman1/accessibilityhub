@@ -221,7 +221,7 @@ class StagingServiceTests(unittest.TestCase):
         # Read-only toolchain visibility: every tool name maps to a version
         # string or null (absent). No behavior key hides in here.
         self.assertIn("toolchain", payload)
-        self.assertEqual(set(payload["toolchain"]), {"qpdf", "tesseract", "pdftoppm", "verapdf"})
+        self.assertEqual(set(payload["toolchain"]), {"qpdf", "tesseract", "pdftoppm", "verapdf", "pdfcraft"})
         for value in payload["toolchain"].values():
             self.assertTrue(value is None or isinstance(value, str))
 

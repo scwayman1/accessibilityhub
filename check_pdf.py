@@ -486,6 +486,25 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             "report_path": None,
         }
 
+    second = {"tool": "pdfcraft", "available": False, "reason": "Not run: the document could not be opened for review."}
+    if not qpdf_blocking and not encrypted and reader is not None:
+        try:
+            from tina.pdfcraft import second_opinion
+            second = second_opinion(pdf.read_bytes(), findings, strengths)
+        except Exception as error:  # A second opinion must never break a review.
+            second = {"tool": "pdfcraft", "available": False, "reason": f"PdfCraft's check did not complete: {type(error).__name__}"}
+        failed = [item for item in second.get("results", []) if item.get("status") == "failed"]
+        if failed:
+            names = "; ".join(
+                f"{item.get('name')}" + (f" ({item['findings'][0]['message']})" if item.get("findings") else "")
+                for item in failed[:8]
+            )
+            findings.append(finding(
+                "advisory", "PDF.SECOND_OPINION.PDFCRAFT", "low", "PdfCraft accessibility checker",
+                f"A second checker (PdfCraft, modeled on Acrobat's checker) flagged {len(failed)} rule(s): {names}."[:1000],
+                "Review each flagged item in context. A second opinion routes work to a person; it is not a verdict on the document.",
+            ))
+
     report = {
         "schema_version": "0.1",
         "checker": "pdf-deterministic-checker",
@@ -502,9 +521,11 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
             "pypdf": pypdf_version,
             "docker": command_version(["docker", "--version"]),
             "verapdf_image": VERAPDF_IMAGE,
+            "pdfcraft": second.get("version") if second.get("available") else None,
         },
         "metadata": metadata,
         "verapdf": verapdf,
+        "second_opinion": second,
         "findings": findings,
         "not_assessed": not_assessed,
         "strengths": strengths,
