@@ -18,7 +18,7 @@ from urllib.parse import parse_qs
 from tina.remedy import MetadataRemediation, RemediationError
 from tina.ocr import OcrRemediation
 from tina.structure import StructureRemediation
-from tina.derive import DerivationError, build_docmodel, extract_blocks, scanned_pages
+from tina.derive import DerivationError, build_docmodel, docmodel_blocks, extract_blocks, scanned_pages
 from tina.docmodel import DocModelError, apply_figure_decisions, validate_docmodel
 
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
@@ -1509,7 +1509,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         ocr_problems.append(f"Text recognition did not run: {error}")
                         ocr_requested = False
                 try:
-                    blocks = extract_blocks(model_source)
+                    blocks = docmodel_blocks(model_source)
                 except DerivationError:
                     blocks = []
                 roles = None
