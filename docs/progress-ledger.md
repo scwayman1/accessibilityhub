@@ -208,6 +208,47 @@ driven by a live product-render review of the merged build:
 Tests: 240 total (was 185). Browser-verified before/after across the
 workbench, landing, and staging surfaces.
 
+## Follow-up loop: validation, own-UI accessibility, links, OCR, image CI (2026-10-11)
+
+- **veraPDF runs locally:**
+  - `scripts/install_verapdf.sh` installs the pinned CLI (greenfield-apps
+    1.28.2) from Maven Central.
+  - `check_pdf.py` prefers this local CLI, keeps the pinned Docker image as
+    the fallback, and reports UA-1 failed clauses.
+  - CI installs it, so `tests/test_verapdf.py` checks our produced PDFs on
+    every PR.
+  - Result: no produced PDF in the bench has a failed UA-1 machine check,
+    while the untagged sources and the legacy `.ready.pdf` do fail.
+- **Our own UI (ACR-1..4):**
+  - Field borders now use `--field #857D75` (4.05:1).
+  - Progress pages have "Pause automatic updates".
+  - Sessions last 20 hours (WCAG's twenty-hour exception).
+  - A "Pause animations" control works without scripts in hosted mode
+    (cookie plus middleware); the workbench has a toggle.
+  - Fix Lab fields have visible labels.
+  - Tests: `OwnSurfaceAccessibilityTests` in `tests/test_hardening.py`.
+    Assistive-technology testing is still pending.
+- **Links:**
+  - Link annotations are matched to the words drawn under them and attached
+    to the paragraph containing those words.
+  - Addresses written in the text link to themselves.
+  - Only http, https and mailto links are allowed.
+  - Produced PDFs carry tagged `/Link` elements, and the form lists the
+    links so a person can check them.
+  - Tests: `LinkTests`.
+- **OCR before rebuild:**
+  - Scanned pages (`scanned_pages`) can be recognized with tesseract.
+  - Every recognized line is shown for a person to correct, and nothing is
+    produced until they confirm.
+  - The copy's note records that a person corrected the text.
+  - Test:
+    `ServiceAccessibleCopyTests.test_scanned_pages_can_be_recognized_reviewed_and_corrected`.
+- **Docker image in CI:**
+  - `.github/workflows/docker.yml` builds the image: PdfCraft stage, veraPDF
+    stage, plus pango, fonts, poppler, qpdf, tesseract and Java.
+  - `scripts/docker_smoke.sh` then checks that every tool is present, produces
+    and validates a copy inside the container, and checks `/healthz`.
+
 ## Finishing loop — PdfCraft, accessible output files, pilot hardening (2026-10-11)
 
 The missing tooling was an Acrobat-comparable editor. It is **PdfCraft**
@@ -269,10 +310,8 @@ own pipeline.
 - **Known gaps, carried forward:**
   - The legacy `.ready.pdf` seal page is still untagged. The accessible copy
     is the tagged alternative.
-  - Link annotations are not carried into produced copies.
-  - Scanned pages become one described image unless OCR runs first.
-  - The commercial pack's accessibility conformance report lists UI defects
-    in our own surfaces: 1.4.11 contrast, 2.2.1/2.2.2 timing, 3.3.2 labels.
+  - Link annotations, OCR and the UI defects were addressed in the follow-up
+    loop above.
 
 ## Demo-readiness loop (2026-08-04)
 

@@ -162,7 +162,20 @@ When it is present:
 - Page images render without poppler.
 
 When it is absent, reviews disclose the skipped check and everything else
-works. A `Dockerfile` bundles PdfCraft with the rest of the toolchain.
+works.
+
+## veraPDF (PDF/UA-1 validator) and the full-toolchain image
+
+```sh
+scripts/install_verapdf.sh           # pinned veraPDF CLI -> vendor-bin/verapdf (needs Java + Maven)
+docker build -t accessibility-hub . && scripts/docker_smoke.sh accessibility-hub
+```
+
+When veraPDF is installed, every review and every produced copy includes its
+UA-1 results as evidence for a person to review. The `Dockerfile` bundles
+PdfCraft, veraPDF, WeasyPrint's libraries, poppler, qpdf and tesseract. CI
+builds and smoke-tests the image. Locally, `VERAPDF_BIN=/nonexistent` skips
+veraPDF to keep the test suite fast.
 
 ## Demo
 
