@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Provider | [VENDOR LEGAL ENTITY NAME] |
+| Provider | Coastline College Foundation |
 | Institution | [INSTITUTION LEGAL NAME] for Coastline College |
 | Institution pilot lead | [NAME, TITLE] |
 | Provider lead | [NAME] |

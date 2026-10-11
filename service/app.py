@@ -25,6 +25,7 @@ from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
 from service.hardening import RateLimiter, client_address, harden
 from service.repository import StagingRepository, now as repo_now
 from service.settings import ServiceSettings
+from service.sso import placeholder_html as sso_placeholder_html
 from service.toolchain import toolchain_versions as _toolchain_versions
 from service.worker import AssessmentWorker, LANE_ORDER, rasterize_page_png, next_version_name as _next_version_name, split_version as _split_version
 
@@ -1095,13 +1096,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         if path == "/login" and method == "GET":
             if settings.login_ready:
                 note = "<p class=small>You are signed out.</p>" if "signed-out=1" in environ.get("QUERY_STRING", "") else ""
-                sso = ""
+                # Hosted: a disabled placeholder for the coming SSO path, never a route.
+                sso = sso_placeholder_html(settings.sso_provider)
                 if settings.environment == "development":
                     # Honest stub: development-only, one click, no directory contacted.
                     sso = ('<form method=post action="/login/sso"><div class=actions><button>Sign in with your Coastline Microsoft account</button></div></form>'
                            '<p class=sso-caption>Demo sign-in — no Microsoft account is contacted.</p>'
                            '<div class=login-divider aria-hidden=true>or</div>')
-                return _response(start_response, "200 OK", _simple_page("Sign in — Accessibility Hub", f"<div class=login><section class=panel><p class=eyebrow>Access</p><h2>Enter the staging workspace</h2>{note}{sso}<p>Enter your access code to continue.</p><form method=post><label for=code>Access code</label><input id=code name=code type=password autocomplete=current-password required><div class=actions><button class={'secondary' if sso else 'primary'}>Continue</button></div></form></section></div>"))
+                return _response(start_response, "200 OK", _simple_page("Sign in — Accessibility Hub", f"<div class=login><section class=panel><p class=eyebrow>Access</p><h2>Enter the staging workspace</h2>{note}{sso}<p>Enter your access code to continue.</p><form method=post><label for=code>Access code</label><input id=code name=code type=password autocomplete=current-password required><div class=actions><button class={'secondary' if sso and settings.environment == 'development' else 'primary'}>Continue</button></div></form></section></div>"))
             return _response(start_response, "503 Service Unavailable", _simple_page("Access setup required", "<div class=login><section class=locked><h2>Access setup is incomplete</h2><p>This service remains closed until a staging access code and session secret are configured.</p></section></div>"))
         if path == "/login" and method == "POST":
             retry = login_limiter.hit(f"login:{client_address(environ, trust_proxy)}")
