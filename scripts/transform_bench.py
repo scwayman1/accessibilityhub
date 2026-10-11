@@ -229,7 +229,7 @@ def run_produce(path: Path, out_dir: Path) -> dict[str, Any]:
     from tina.docmodel import DocModelError, apply_figure_decisions
 
     produced: dict[str, Any] = {"status": "error", "needs_attention": None, "lanes": None,
-                                "pdfcraft_failed": None, "figures": 0, "note": None}
+                                "pdfcraft_failed": None, "verapdf_failed": None, "figures": 0, "note": None}
     try:
         model = build_docmodel(path.read_bytes(), title=pipeline_title(path.name, "bench_corpus"), language=AUTO_FIX_LANGUAGE)
         figures = {block["figure"]: {"decorative": True} for block in model["blocks"] if block["kind"] == "figure"}
@@ -243,6 +243,9 @@ def run_produce(path: Path, out_dir: Path) -> dict[str, Any]:
         check = package["self_check"]
         produced.update({"status": "produced", "lanes": check["lanes"],
                          "needs_attention": [item["rule_id"] for item in check["needs_attention"]]})
+        verapdf = check.get("verapdf") or {}
+        if verapdf.get("tool_available") is not False and verapdf.get("runner"):
+            produced["verapdf_failed"] = [f"{rule['clause']}" for rule in verapdf.get("failed_rules") or []]
         second = check.get("second_opinion") or {}
         if second.get("available"):
             produced["pdfcraft_failed"] = [item["rule"] for item in second.get("results", []) if item.get("status") == "failed"]
@@ -519,7 +522,9 @@ def main(argv: list[str] | None = None) -> int:
                 detail = produced.get("note") or (
                     f"needs attention: {len(produced.get('needs_attention') or [])}"
                     + (f" · PdfCraft failures: {', '.join(produced['pdfcraft_failed']) or 'none'}"
-                       if produced.get("pdfcraft_failed") is not None else " · PdfCraft: not run"))
+                       if produced.get("pdfcraft_failed") is not None else " · PdfCraft: not run")
+                    + (f" · veraPDF UA-1 failed clauses: {', '.join(produced['verapdf_failed']) or 'none'}"
+                       if produced.get("verapdf_failed") is not None else " · veraPDF: not run"))
                 print(f"  {record['name'][:34]:<34} {produced.get('status', '-'):<18} {detail}")
             print()
         print(f"HTML report: {report_path}")

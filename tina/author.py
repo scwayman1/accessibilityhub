@@ -231,6 +231,8 @@ def self_check(pdf_bytes: bytes) -> dict[str, Any]:
         "needs_attention": attention,
         "completeness": normalized.get("completeness"),
         "second_opinion": report.get("second_opinion"),
+        "verapdf": {key: report.get("verapdf", {}).get(key) for key in
+                    ("runner", "profile", "profile_compliant", "failed_rules", "tool_available")},
     }
 
 

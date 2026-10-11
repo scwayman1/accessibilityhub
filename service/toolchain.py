@@ -45,7 +45,10 @@ def _docker_daemon_running() -> bool:
 @functools.lru_cache(maxsize=1)
 def toolchain_versions() -> dict[str, str | None]:
     """{tool: version-line-or-None} for the document toolchain, cached per process."""
-    verapdf = _first_line(["verapdf", "--version"])
+    from check_pdf import local_verapdf_command
+
+    local = local_verapdf_command()
+    verapdf = _first_line([local, "--version"]) if local else None
     if verapdf is None and _docker_daemon_running():
         verapdf = "containerized (pinned image via Docker)"
     return {

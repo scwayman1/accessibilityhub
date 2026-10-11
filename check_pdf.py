@@ -156,8 +156,68 @@ def iter_figures(struct_root: Any) -> list[dict[str, Any]]:
     return figures
 
 
+def local_verapdf_command() -> str | None:
+    """A locally installed veraPDF CLI: VERAPDF_BIN, vendor-bin/verapdf, or PATH."""
+    configured = os.environ.get("VERAPDF_BIN", "").strip()
+    if configured:
+        return configured if Path(configured).is_file() and os.access(configured, os.X_OK) else None
+    vendored = Path(__file__).resolve().parent / "vendor-bin" / "verapdf"
+    if vendored.is_file() and os.access(vendored, os.X_OK):
+        return str(vendored)
+    return shutil.which("verapdf")
+
+
+def summarize_verapdf(stdout: str) -> dict[str, Any]:
+    """Pull the profile outcome and failed clauses out of veraPDF's JSON report."""
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return {"report_parse_error": "veraPDF did not emit parseable JSON"}
+    summary: dict[str, Any] = {
+        "report_top_level_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+        "report_bytes": len(json.dumps(payload)),
+    }
+    try:
+        result = payload["report"]["jobs"][0]["validationResult"][0]
+    except (KeyError, IndexError, TypeError):
+        return summary
+    details = result.get("details") or {}
+    summary["profile_name"] = result.get("profileName")
+    summary["profile_compliant"] = bool(result.get("compliant"))
+    summary["failed_rules"] = [
+        {"clause": rule.get("clause"), "test": rule.get("testNumber"),
+         "description": str(rule.get("description") or "")[:300], "failed_checks": rule.get("failedChecks")}
+        for rule in (details.get("ruleSummaries") or []) if rule.get("status") == "failed"
+    ][:25]
+    summary["failed_rule_count"] = details.get("failedRules")
+    return summary
+
+
+def _run_local_verapdf(command: str, pdf: Path, report: Path) -> dict[str, Any]:
+    # Offline validator, run on the file in place; never given network work to do.
+    env = {**os.environ, "LANG": "C.UTF-8"}
+    try:
+        completed = subprocess.run([command, "--format", "json", "--flavour", VERAPDF_PROFILE, str(pdf)],
+                                   capture_output=True, text=True, timeout=180, env=env, check=False)
+        stdout, stderr, returncode = completed.stdout, completed.stderr, completed.returncode
+    except (OSError, subprocess.TimeoutExpired) as error:
+        stdout, stderr, returncode = "", f"The local veraPDF validator did not complete: {type(error).__name__}", None
+    report.write_text(stdout or "")
+    if not stdout.strip():
+        return {"runner": "local", "profile": VERAPDF_PROFILE, "classification": "experimental_technical_findings_only",
+                "returncode": returncode, "tool_available": False,
+                "stderr": (stderr or "The local veraPDF validator produced no report.").strip()[:1000], "report_path": None}
+    return {"runner": "local", "profile": VERAPDF_PROFILE, "classification": "experimental_technical_findings_only",
+            "returncode": returncode, "stderr": "\n".join(line for line in (stderr or "").splitlines()
+                                                           if not line.startswith("Picked up JAVA_TOOL_OPTIONS"))[:2000],
+            "report_path": str(report), **summarize_verapdf(stdout)}
+
+
 def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
     report = output_dir / "verapdf-ua1.json"
+    local = local_verapdf_command()
+    if local:
+        return _run_local_verapdf(local, pdf, report)
     image_check = run(["docker", "image", "inspect", VERAPDF_IMAGE], timeout=10)
     if image_check["returncode"] != 0:
         reason = (
@@ -189,6 +249,7 @@ def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
     )
     report.write_text(result["stdout"] or "")
     summary: dict[str, Any] = {
+        "runner": "docker",
         "image": VERAPDF_IMAGE,
         "profile": VERAPDF_PROFILE,
         "classification": "experimental_technical_findings_only",
@@ -196,13 +257,7 @@ def run_verapdf(pdf: Path, output_dir: Path) -> dict[str, Any]:
         "stderr": (result["stderr"] or "").strip()[:2000],
         "report_path": str(report),
     }
-    try:
-        payload = json.loads(result["stdout"])
-        summary["report_top_level_keys"] = sorted(payload.keys()) if isinstance(payload, dict) else []
-        report_text = json.dumps(payload)
-        summary["report_bytes"] = len(report_text)
-    except json.JSONDecodeError:
-        summary["report_parse_error"] = "veraPDF did not emit parseable JSON"
+    summary.update(summarize_verapdf(result["stdout"] or ""))
     return summary
 
 
@@ -473,9 +528,17 @@ def analyze(pdf: Path, output_dir: Path) -> dict[str, Any]:
                           "This area is routed to a human reviewer until the validator is available.",
             })
         else:
+            failed_rules = verapdf.get("failed_rules")
+            if failed_rules:
+                clauses = "; ".join(f"{rule['clause']}: {rule['description'][:120]}" for rule in failed_rules[:6])
+                evidence = f"veraPDF's UA-1 profile flagged {len(failed_rules)} rule(s) ({clauses})."[:1000]
+            elif verapdf.get("profile_compliant") is True:
+                evidence = "veraPDF's UA-1 profile flagged no machine-checkable rules. Its own report notes that many UA requirements need a person to judge."
+            else:
+                evidence = "veraPDF UA-1 profile report was generated as experimental technical evidence only."
             findings.append(finding(
                 "advisory", "PDF.VERAPDF.UA1", "info", "veraPDF report",
-                "veraPDF UA-1 profile report was generated as experimental technical evidence only.",
+                evidence,
                 "Review the raw report alongside the Coastline rule pack; do not convert its outcome into a conformance claim.",
             ))
     else:
