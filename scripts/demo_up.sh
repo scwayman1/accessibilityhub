@@ -9,8 +9,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PYTHON="${PYTHON:-python3.11}"
-command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python3
+if [ -z "${PYTHON:-}" ]; then
+  if [ -x "$PWD/.venv/bin/python" ]; then
+    PYTHON="$PWD/.venv/bin/python"
+  elif command -v python3.11 >/dev/null 2>&1; then
+    PYTHON=python3.11
+  else
+    PYTHON=python3
+  fi
+elif ! command -v "$PYTHON" >/dev/null 2>&1; then
+  echo "Specified PYTHON interpreter not found: $PYTHON" >&2
+  exit 1
+fi
 
 export HUB_ENV=development
 export PORT="${HUB_PORT:-8787}"
