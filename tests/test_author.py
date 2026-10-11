@@ -402,3 +402,19 @@ class ServiceAccessibleCopyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_WEASYPRINT, "WeasyPrint is not installed")
+class BenchProduceTests(unittest.TestCase):
+    def test_bench_produce_mode_rechecks_each_copy(self):
+        import scripts.transform_bench as bench
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "outline.pdf"
+            source.write_bytes(mixed_pdf())
+            produced = bench.run_produce(source, Path(directory))
+            self.assertEqual(produced["status"], "produced", produced.get("note"))
+            self.assertEqual(produced["needs_attention"], [])
+            self.assertEqual(produced["figures"], 1)
+            self.assertTrue((Path(directory) / "outline.bench.accessible.pdf").is_file())
+            self.assertTrue((Path(directory) / "outline.bench.accessible.html").is_file())

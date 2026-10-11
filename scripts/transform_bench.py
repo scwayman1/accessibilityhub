@@ -217,6 +217,42 @@ def run_document(path: Path, out_dir: Path) -> dict[str, Any]:
         record["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
 
 
+def run_produce(path: Path, out_dir: Path) -> dict[str, Any]:
+    """Accessible HTML + tagged PDF for one document, rechecked. Never raises.
+
+    The bench cannot make a person's decisions, so for measurement only every
+    image is treated as decorative and no headings are confirmed. Outputs are
+    written as *.bench.accessible.{html,pdf} and are never a deliverable.
+    """
+    from tina.author import AccessiblePackageProducer
+    from tina.derive import DerivationError, build_docmodel
+    from tina.docmodel import DocModelError, apply_figure_decisions
+
+    produced: dict[str, Any] = {"status": "error", "needs_attention": None, "lanes": None,
+                                "pdfcraft_failed": None, "figures": 0, "note": None}
+    try:
+        model = build_docmodel(path.read_bytes(), title=pipeline_title(path.name, "bench_corpus"), language=AUTO_FIX_LANGUAGE)
+        figures = {block["figure"]: {"decorative": True} for block in model["blocks"] if block["kind"] == "figure"}
+        model = apply_figure_decisions(model, figures)
+        produced["figures"] = len(figures)
+        package = AccessiblePackageProducer.with_builtin_tools().produce(
+            model, {"improvements": ["Bench measurement copy: images treated as decorative"]})
+        stem = _safe_output_name(path.name).removesuffix(".ready.pdf")
+        (out_dir / f"{stem}.bench.accessible.pdf").write_bytes(package["pdf"])
+        (out_dir / f"{stem}.bench.accessible.html").write_text(package["html"], encoding="utf-8")
+        check = package["self_check"]
+        produced.update({"status": "produced", "lanes": check["lanes"],
+                         "needs_attention": [item["rule_id"] for item in check["needs_attention"]]})
+        second = check.get("second_opinion") or {}
+        if second.get("available"):
+            produced["pdfcraft_failed"] = [item["rule"] for item in second.get("results", []) if item.get("status") == "failed"]
+    except (DerivationError, DocModelError) as error:
+        produced.update({"status": "declined_expected", "note": str(error)})
+    except Exception as error:  # a crash is a bench failure, never hidden
+        produced.update({"status": "error", "note": f"{type(error).__name__}: {error}"})
+    return produced
+
+
 def _lane_cell(counts: dict[str, int] | None) -> str:
     if counts is None:
         return "—"
@@ -430,6 +466,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "bench-out",
                         help="Output directory for .ready.pdf files and bench-report.html")
     parser.add_argument("--fast", action="store_true", help=f"Skip the timing document ({TIMING_DOC})")
+    parser.add_argument("--produce", action="store_true",
+                        help="Also produce accessible HTML + tagged PDF copies and recheck them (measurement only)")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="Emit machine-readable JSON on stdout instead of the table")
     args = parser.parse_args(argv)
@@ -439,6 +477,16 @@ def main(argv: list[str] | None = None) -> int:
 
     records = [run_document(path, args.out) for path in inputs]
     ok = all(r["status"] in EXPECTED_STATUSES for r in records)
+    if args.produce:
+        for path, record in zip(inputs, records):
+            if record["status"] == "declined_expected":
+                record["produce"] = {"status": "declined_expected", "note": "The source could not be read, so no copy was produced."}
+                continue
+            record["produce"] = run_produce(path, args.out)
+        # Our own output must never land in Needs attention, and a crash fails the bench.
+        ok = ok and all(
+            r["produce"]["status"] in {"produced", "declined_expected"} and not r["produce"].get("needs_attention")
+            for r in records)
     when = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     corpus_label = ", ".join(str(p) for p in args.inputs)
 
@@ -464,6 +512,16 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print(render_table(records))
         print()
+        if args.produce:
+            print("Accessible copies (measurement only; images treated as decorative):")
+            for record in records:
+                produced = record.get("produce") or {}
+                detail = produced.get("note") or (
+                    f"needs attention: {len(produced.get('needs_attention') or [])}"
+                    + (f" · PdfCraft failures: {', '.join(produced['pdfcraft_failed']) or 'none'}"
+                       if produced.get("pdfcraft_failed") is not None else " · PdfCraft: not run"))
+                print(f"  {record['name'][:34]:<34} {produced.get('status', '-'):<18} {detail}")
+            print()
         print(f"HTML report: {report_path}")
         print("Expected outcomes: transformed, no changes needed, or an honestly stated decline.")
         print(f"Result: {'all documents behaved as expected' if ok else 'UNEXPECTED OUTCOMES PRESENT'}")

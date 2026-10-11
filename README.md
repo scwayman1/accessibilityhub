@@ -103,6 +103,7 @@ staging worker runs — transform every document:
 ```sh
 python3.11 scripts/make_test_corpus.py                 # writes ./corpus/ (gitignored)
 python3.11 scripts/transform_bench.py corpus --out bench-out
+python3.11 scripts/transform_bench.py corpus --fast --produce   # also build + recheck accessible copies
 ```
 
 The corpus covers missing title/language, unnamed links, tagged figures without
@@ -126,6 +127,42 @@ Toolchain visibility: `scripts/demo_up.sh` prints the same detection block on
 startup, and `/healthz` reports it read-only under `"toolchain"`
 (name → version line, or `null` when absent — absent tools are disclosed
 per-review under *Review completeness*).
+
+## Accessible copies: HTML + tagged PDF
+
+From a reviewed document, the Hub can rebuild **accessible HTML** and a
+**tagged PDF/UA-1** copy. It uses the title, language, headings and lists a
+person confirms, plus a person's description (or decorative decision) for each
+image. The tool never writes alt text and never produces a copy while any
+image is undecided.
+
+- Engine: `tina/author.py` (WeasyPrint `pdf/ua-1`). It rechecks its own PDF
+  with the same checker, and with PdfCraft when present.
+- Workbench: `POST /api/produce`.
+- Staging: the **Get accessible HTML + tagged PDF** link opens
+  `/documents/{id}/accessible`. Hosted environments keep it closed unless
+  `HUB_ENABLE_PRODUCE=true`.
+- The copy is re-flowed rather than a pixel replica. It ends with an "About
+  this copy" note: a review record, not a certification.
+
+## PdfCraft (optional second opinion, tagged-PDF fixes, page images)
+
+[PdfCraft](https://github.com/storytold/pdfcraft) is the open-source,
+Acrobat-comparable PDF workbench from the ArtCraft suite (MIT OR Apache-2.0).
+To build the pinned CLI (needs Rust 1.90 or newer and a C compiler):
+
+```sh
+scripts/build_pdfcraft.sh            # -> vendor-bin/pdfcraft-cli (or set PDFCRAFT_BIN)
+```
+
+When it is present:
+- Reviews add PdfCraft's 32-rule Acrobat-style check as a second opinion.
+  Anything it flags goes to *Review recommended*.
+- People can describe images in PDFs that are already tagged.
+- Page images render without poppler.
+
+When it is absent, reviews disclose the skipped check and everything else
+works. A `Dockerfile` bundles PdfCraft with the rest of the toolchain.
 
 ## Demo
 
@@ -194,7 +231,9 @@ It writes `out/report.json` and `out/report.md`.
 | `scripts/demo_up.sh` | One-command local staging demo launcher |
 | `scripts/staging_smoke.py` | Repeatable per-deploy smoke test |
 | `render.yaml` | Render Blueprint for the hosted staging service |
-| `tina/` | Permission-gated tool kernel: remediation, evidence receipts, learning journey |
+| `tina/` | Permission-gated tool kernel: remediation, evidence receipts, learning journey, accessible copies (`author.py`, `docmodel.py`), PdfCraft adapter (`pdfcraft.py`) |
+| `scripts/build_pdfcraft.sh`, `Dockerfile` | Pinned PdfCraft build; full-toolchain container image |
+| `docs/commercial/` | Pilot commercial pack drafts (counsel review pending) |
 | `tests/` | Full suite (`python3.11 -m pytest tests/ -q`) |
 
 ## Deeper product documents
