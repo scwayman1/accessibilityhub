@@ -22,6 +22,7 @@ from tina.derive import DerivationError, build_docmodel, extract_blocks
 from tina.docmodel import DocModelError, apply_figure_decisions, validate_docmodel
 
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
+from service.hardening import RateLimiter, client_address, harden
 from service.repository import StagingRepository, now as repo_now
 from service.settings import ServiceSettings
 from service.worker import AssessmentWorker, LANE_ORDER, rasterize_page_png, next_version_name as _next_version_name, split_version as _split_version
@@ -381,7 +382,8 @@ def _simple_page(title: str, inner: str) -> bytes:
 
 
 def _session_token(settings: ServiceSettings, actor: str = ACTOR_ID, display: str = "") -> str:
-    session = {"actor": actor, "tenant": TENANT_ID, "exp": int(time.time()) + 28800}
+    # sid lets sign-out revoke this exact session on the server.
+    session = {"actor": actor, "tenant": TENANT_ID, "exp": int(time.time()) + 28800, "sid": secrets.token_urlsafe(12)}
     if display:
         session["display"] = display
     payload = base64.urlsafe_b64encode(json.dumps(session).encode()).decode().rstrip("=")
@@ -627,6 +629,16 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
     settings = settings or ServiceSettings.from_environ()
     repository = repository or StagingRepository(settings.data_dir)
     worker = worker or AssessmentWorker(repository)
+    login_limiter = RateLimiter(limit=10, window=300)
+    action_limiter = RateLimiter(limit=60, window=300)
+    trust_proxy = settings.environment == "staging"
+
+    def _too_many(start_response: Callable, retry_after: float):
+        return _response(start_response, "429 Too Many Requests", _simple_page(
+            "Please wait — Accessibility Hub",
+            "<div class=login><section class=locked><h2>Too many attempts in a short time.</h2>"
+            f"<p>Please wait about {int(retry_after // 60) + 1} minute(s), then try again.</p></section></div>"),
+            [("Retry-After", str(int(retry_after)))])
     worker.start()
 
     def _ocr_in_lineage(document: dict[str, Any]) -> bool:
@@ -946,6 +958,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(payload))), ("Cache-Control", "no-store")])
             return [payload]
         if path == "/logout" and method == "POST":
+            ending = _session_data(environ, settings)
+            if ending and ending.get("sid"):
+                repository.revoke_session(str(ending["sid"]), int(ending.get("exp") or 0))
             expired = "hub_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" + ("; Secure" if settings.environment == "staging" else "")
             return _redirect(start_response, "/login?signed-out=1", [("Set-Cookie", expired)])
         if path == "/login" and method == "GET":
@@ -960,6 +975,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 return _response(start_response, "200 OK", _simple_page("Sign in — Accessibility Hub", f"<div class=login><section class=panel><p class=eyebrow>Access</p><h2>Enter the staging workspace</h2>{note}{sso}<p>Enter your access code to continue.</p><form method=post><label for=code>Access code</label><input id=code name=code type=password autocomplete=current-password required><div class=actions><button class={'secondary' if sso else 'primary'}>Continue</button></div></form></section></div>"))
             return _response(start_response, "503 Service Unavailable", _simple_page("Access setup required", "<div class=login><section class=locked><h2>Access setup is incomplete</h2><p>This service remains closed until a staging access code and session secret are configured.</p></section></div>"))
         if path == "/login" and method == "POST":
+            retry = login_limiter.hit(f"login:{client_address(environ, trust_proxy)}")
+            if retry is not None:
+                return _too_many(start_response, retry)
             code = _form(environ).get("code", "")
             if settings.login_ready and hmac.compare_digest(code, settings.access_code or ""):
                 cookie = f"hub_session={_session_token(settings)}; HttpOnly; SameSite=Lax; Path=/" + ("; Secure" if settings.environment == "staging" else "")
@@ -973,6 +991,8 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             cookie = f"hub_session={_session_token(settings, actor=SSO_ACTOR, display=SSO_DISPLAY)}; HttpOnly; SameSite=Lax; Path=/"
             return _redirect(start_response, "/app", [("Set-Cookie", cookie)])
         session = _session_data(environ, settings)
+        if session and session.get("sid") and repository.session_revoked(str(session["sid"])):
+            session = None
         signed_in = session is not None
         persona = (session or {}).get("display") or ""
         actor = (session or {}).get("actor") or ACTOR_ID
@@ -988,6 +1008,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         educator = dev and settings.synthetic_intake_ready and signed_in and actor == SSO_ACTOR
         if not settings.public_access and not signed_in:
             return _redirect(start_response, "/login")
+        if method == "POST" and path.startswith("/documents"):
+            retry = action_limiter.hit(f"act:{actor}:{client_address(environ, trust_proxy)}")
+            if retry is not None:
+                return _too_many(start_response, retry)
         if path in {"/", "/app"} and method == "GET":
             documents = repository.list_documents(TENANT_ID)
             by_id = {d["id"]: d for d in documents}
@@ -1525,4 +1549,4 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     message = "Something in this request could not be read. Return to the document and try again."
                 return _response(start_response, "400 Bad Request", _simple_page("Repair needs a closer look", f"<div class=shell><section class=locked><h2>This change was not applied.</h2><p>{escape(message)}</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"))
         return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
-    return app
+    return harden(app, hosted=settings.environment == "staging")

@@ -1,0 +1,10 @@
+.git
+.venv
+.hub-staging
+.pdfcraft-src
+vendor-bin
+corpus
+bench-out
+out
+fixtures
+__pycache__
