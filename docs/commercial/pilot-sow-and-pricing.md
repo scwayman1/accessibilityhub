@@ -37,10 +37,11 @@ Because of this, the pilot is structured with a **readiness gate**: no instituti
 ### Phase 1 — Hosted pilot (one semester)
 - Up to **[N, e.g., 10–15] faculty** in [DEPARTMENTS], invited by Institution.
 - PDF documents only, ≤25 MiB each (schema limit); [DOCUMENT CAP, e.g., 40 per faculty].
-- Data classification limit: [e.g., no SSN, health, or financial-aid records; rosters/graded work only with Institution approval].
+- Audience: faculty and staff only. The Hub has no student-facing exposure (students have no accounts and never sign in), as confirmed by the Foundation on 2026-10-11.
+- Data classification limit: course materials only. No student records (rosters, graded work with names or IDs), SSNs, health, or financial-aid records.
 - Onboarding workshop ([1] × [90] min), office hours ([biweekly]), email support business days [HOURS], response target [1 business day].
 - Mid-pilot check-in and end-of-pilot report.
-- No AI features; sponsored cards [shown / disabled for pilot tenant — DECISION].
+- No AI features. Sponsored Coastline College Foundation cards stay on processing screens (decided 2026-10-11).
 
 ### Out of scope
 DOCX/PPTX/other formats; student-facing use; LMS integration; AI/model features; formal conformance auditing of documents; 24×7 support; multi-institution administration.
