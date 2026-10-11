@@ -61,6 +61,9 @@ for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:18000/healthz >/tmp/hub-healthz.json 2>/dev/null; then break; fi
   sleep 1
 done
+docker exec "$NAME" stat -c %U /proc/1 | grep -qx hub \
+  || { echo "gunicorn is not running as the unprivileged hub user" >&2; exit 1; }
+echo "web server runs as the unprivileged hub user"
 python3 - <<'PY'
 import json
 payload = json.load(open("/tmp/hub-healthz.json"))

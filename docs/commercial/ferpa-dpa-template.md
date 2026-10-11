@@ -2,7 +2,7 @@
 
 # Student Data Privacy and Data Processing Agreement — template
 
-Between **[INSTITUTION LEGAL NAME]** ("Institution") and **[VENDOR LEGAL ENTITY NAME]** ("Provider") for Coastline Accessibility Hub (the "Service"). Effective [DATE].
+Between **[INSTITUTION LEGAL NAME]** ("Institution") and **Coastline College Foundation** ("Provider") for Coastline Accessibility Hub (the "Service"). Effective [DATE].
 
 > Drafting notes for counsel
 > - Many California community colleges use the **California Student Data Privacy Agreement (CA-NDPA)** published by the Student Data Privacy Consortium, or a district-specific DPA. If Institution has one, sign that instead and attach Exhibit A–C below as the Provider-specific schedules.

@@ -9,7 +9,34 @@ acts stay honest at every step about what the product did check, what it could
 not check, and what changed. Nothing in this script claims a pass, score, or
 certification — because the product never produces one.
 
-## 1. Sixty-second setup
+## 1. Setup
+
+### Option A — Docker, full toolchain (recommended)
+
+One command runs everything on your computer only: PdfCraft, veraPDF, OCR,
+page images, and the PDF libraries for accessible copies.
+
+```sh
+scripts/demo_docker.sh            # first run builds the image (~10 min)
+```
+
+It prints the URL (`http://127.0.0.1:8787/login`) and an access code.
+Uploads stay in a local Docker volume (`docker volume rm hub-demo-data`
+clears it). After pulling new code, run `scripts/demo_docker.sh --rebuild`.
+
+### Option B — native Python (lighter; some checks are disclosed as skipped)
+
+```sh
+pip install -r requirements.txt
+brew install pango tesseract qpdf poppler   # macOS; on Linux: apt install libpango-1.0-0 tesseract-ocr qpdf poppler-utils
+scripts/install_verapdf.sh                  # optional: needs Java + Maven
+scripts/build_pdfcraft.sh                   # optional: needs Rust 1.94+
+```
+
+Any tool you skip is disclosed under *Review completeness* rather than
+hiding a gap. Then follow the two-terminal setup below.
+
+### Two-terminal setup (Option B)
 
 From the repository root, in two terminals:
 
@@ -140,6 +167,37 @@ the fixes applied.
 > **Say:** "This is a review record you can attach to the file — not a
 > badge, not a certification. Every other page is exactly what you uploaded,
 > plus the title and language set on a copy."
+
+### Step 3b — Accessible copies: HTML and a tagged PDF (2 min)
+
+Back on the ready page, click **Get accessible HTML + tagged PDF →**.
+
+- **Title and language** are filled in. Point out that the copy is
+  **rebuilt** from structure a person confirms, so it re-flows and is not a
+  pixel copy of the original.
+- **Images:** each one is shown, with *describe it* or *it is decorative*.
+  Click **Download tagged PDF** with an image undecided: the page refuses
+  and names the image.
+  > **Say:** "The tool never writes image descriptions. A person decides,
+  > and the tool records it."
+- Type a description, then download **both** files. Open the PDF in Acrobat
+  or Preview and the HTML in a browser.
+- **Links** carried over are listed for a quick check. **See the original
+  pages** shows page images for comparison. **Headings and lists** lets you
+  confirm structure; the first block defaults to the main heading.
+- **Behind the scenes:** the copy is rechecked by our checker, by PdfCraft
+  (an Acrobat-style second opinion) and, in the Docker setup, by veraPDF.
+  In testing, generated copies show no failed machine checks.
+  > **Say:** "This is evidence for review, not a certification. Contrast,
+  > reading order and meaning still need a person."
+
+**Scanned documents (optional, 1 min):** start the scanned sample, open
+*Get accessible HTML + tagged PDF*, and tick **Recognize the text on scanned
+pages**. Each recognized line appears in an editable box, including real
+recognition mistakes. Fix one, confirm you checked the text, and download.
+
+**Accessibility of the tool itself:** on any processing screen, point out
+**Pause automatic updates** and **Pause animations**.
 
 Point at the closing row — **Transform another document →** loops back to
 the drop page; the quiet **Advanced tools** link opens the full classic

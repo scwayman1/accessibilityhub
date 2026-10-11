@@ -1,13 +1,20 @@
 services:
   - type: web
     name: accessibility-hub-staging
-    runtime: python
-    # The hosted runtime has no qpdf, veraPDF (Docker), or tesseract — the
-    # build installs Python packages only. Reviews still complete: the review
-    # discloses each missing check under "Review completeness" instead of
-    # presenting a partial result as a full one.
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --workers 1 --threads 4 --bind 0.0.0.0:$PORT service.wsgi:application
+    # Full document toolchain in one image (Dockerfile): PdfCraft, veraPDF,
+    # WeasyPrint's libraries, poppler, qpdf, tesseract. CI builds and
+    # smoke-tests the same image (.github/workflows/docker.yml).
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Starter is Render's smallest instance type that can carry a disk.
+    plan: starter
+    # The persistent disk is the pilot's storage: SQLite records, document
+    # versions, and thumbnails under /var/data (HUB_DATA_DIR) survive deploys.
+    # A disk pins the service to one instance (deploys briefly restart it).
+    disk:
+      name: hub-data
+      mountPath: /var/data
+      sizeGB: 1
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
@@ -26,11 +33,17 @@ services:
       # "true" would reopen it; keep it off for anything beyond a public demo.
       - key: HUB_PUBLIC_ACCESS
         value: "false"
-      # Accessible HTML + tagged PDF downloads stay closed in hosted staging
-      # until the pilot opens them with the exact value "true". Producing PDFs
-      # also needs pango/fonts, which the Docker image (Dockerfile) provides.
+      # Accessible HTML + tagged PDF downloads: open for the Coastline pilot.
+      # Only the exact value "true" opens them; the Docker image carries the
+      # libraries producing PDFs needs.
       - key: HUB_ENABLE_PRODUCE
-        sync: false
+        value: "true"
+      - key: HUB_DATA_DIR
+        value: /var/data
+      # Shows a disabled "Sign in with your Coastline Microsoft account"
+      # placeholder above the access code; no directory is contacted.
+      - key: HUB_SSO_PROVIDER
+        value: entra
       - key: HUB_PRIVATE_OBJECT_STORAGE
         sync: false
       - key: HUB_MALWARE_SCAN_GATE

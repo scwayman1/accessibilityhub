@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Provider | [VENDOR LEGAL ENTITY NAME], [ADDRESS] ("Provider") |
+| Provider | Coastline College Foundation, [ADDRESS] ("Provider") |
 | Customer | [INSTITUTION LEGAL NAME, e.g., COAST COMMUNITY COLLEGE DISTRICT on behalf of Coastline College] ("Institution") |
 | Effective date | [EFFECTIVE DATE] |
 | Order of precedence | (1) Signed Data Processing Agreement (`ferpa-dpa-template.md`); (2) Statement of Work (`pilot-sow-and-pricing.md`); (3) these Terms; (4) Privacy Policy |

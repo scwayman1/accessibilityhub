@@ -7,10 +7,8 @@
 # disclose fewer skipped checks and accessible copies can be produced and
 # validated.
 #
-# To move the Render service onto this image (a billing decision): set
-# `runtime: docker` and `dockerfilePath: ./Dockerfile` in render.yaml, and
-# attach a persistent disk mounted at /var/data (HUB_DATA_DIR) so records
-# survive deploys. CI builds and smoke-tests this image (.github/workflows/docker.yml).
+# render.yaml runs the hosted service on this image with a persistent disk
+# mounted at /var/data (HUB_DATA_DIR) so records survive deploys. CI builds and smoke-tests this image (.github/workflows/docker.yml).
 
 # PdfCraft declares rust-version 1.90, but its pinned lockfile needs 1.94+
 # (rten, hayro, boa); 1.97 is the version the pinned build is verified with.
@@ -38,6 +36,7 @@ COPY --chown=hub . .
 COPY --from=pdfcraft --chown=hub /build/vendor-bin/pdfcraft-cli /app/vendor-bin/pdfcraft-cli
 COPY --from=verapdf --chown=hub /build/vendor-bin/verapdf /app/vendor-bin/verapdf
 COPY --from=verapdf --chown=hub /build/vendor-bin/verapdf-lib /app/vendor-bin/verapdf-lib
-USER hub
 EXPOSE 8000
-CMD ["sh", "-c", "exec gunicorn --workers 1 --threads 4 --bind 0.0.0.0:${PORT:-8000} service.wsgi:application"]
+# Starts as root only to hand the runtime-mounted disk to `hub`, then drops
+# privileges before serving (scripts/container_start.sh).
+CMD ["scripts/container_start.sh"]

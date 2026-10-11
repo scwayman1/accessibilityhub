@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from service.sso import normalize_provider
+
 
 HOSTED_CONTROL_VARS = (
     "HUB_PRIVATE_OBJECT_STORAGE",
@@ -26,6 +28,7 @@ class ServiceSettings:
     allow_hosted_synthetic: bool = False
     public_access: bool = False
     enable_produce: bool = False
+    sso_provider: str = ""
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> "ServiceSettings":
@@ -46,6 +49,8 @@ class ServiceSettings:
             # Producing downloadable copies stays off in hosted environments
             # until the pilot opens it explicitly (exactly "true").
             enable_produce=values.get("HUB_ENABLE_PRODUCE", "") == "true",
+            # Placeholder only: shows where SSO will live (service/sso.py).
+            sso_provider=normalize_provider(values.get("HUB_SSO_PROVIDER")),
         )
 
     @property

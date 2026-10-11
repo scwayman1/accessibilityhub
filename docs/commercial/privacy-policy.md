@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Operator ("we") | [VENDOR LEGAL ENTITY NAME], [ADDRESS] |
+| Operator ("we") | Coastline College Foundation, [ADDRESS] |
 | Privacy contact | [PRIVACY CONTACT NAME / EMAIL] |
 | Effective date | [EFFECTIVE DATE] |
 | Applies to | The public site (`index.html`, `sample-review.html`), the hosted workspace, and the downloadable local workbench |

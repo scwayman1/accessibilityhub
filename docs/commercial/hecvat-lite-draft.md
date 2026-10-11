@@ -10,7 +10,7 @@ Prepared [2026-10-11] from repository source. Transfer answers into the current 
 
 | Question area | Answer | Evidence | Status |
 |---|---|---|---|
-| Vendor legal entity, address, contact | [VENDOR LEGAL ENTITY], [ADDRESS], [CONTACT] | — | Gap (to fill) |
+| Vendor legal entity, address, contact | Coastline College Foundation, [ADDRESS], [CONTACT] | — | Gap (to fill) |
 | Product description | Deterministic PDF accessibility review: findings in four lanes, educator teaching cards, permission-gated fixes on a copy, recheck. Technical evidence and routing only — no compliance score, certification, or pass | `README.md` | Implemented |
 | Deployment model | Hosted SaaS on Render (US, Oregon) + optional local workbench running on the user's computer | `render.yaml`, `render.real-intake.yaml`, `local_reviewer.py` | Hosted real-document path Planned; local Implemented |
 | Number of staff with production access | One operator (sole incident owner) | `docs/real-intake-operations.md` | Implemented — single point of failure noted |

@@ -207,3 +207,48 @@ class OwnSurfaceAccessibilityTests(unittest.TestCase):
         self.assertNotIn("setAttribute('aria-label','Accessible description for link", source)
         self.assertIn('id="pauseMotion"', source)
         self.assertIn("html.motion-paused *", source)
+
+
+class SsoPlaceholderTests(unittest.TestCase):
+    def make(self, provider):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        settings = ServiceSettings.from_environ({
+            "HUB_ENV": "staging", "HUB_DATA_DIR": self.temp.name, "HUB_STAGING_ACCESS_CODE": "code",
+            "HUB_SESSION_SECRET": "s" * 48, "HUB_SSO_PROVIDER": provider,
+        })
+        repository = StagingRepository(settings.data_dir)
+        worker = AssessmentWorker(repository)
+        self.addCleanup(worker.stop)
+        self.app = create_app(settings, repository, worker)
+        return settings
+
+    def request(self, path, method="GET"):
+        captured = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+
+        body = b"".join(self.app({
+            "REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": "", "CONTENT_LENGTH": "0",
+            "wsgi.input": io.BytesIO(b""), "HTTP_COOKIE": "", "REMOTE_ADDR": "203.0.113.5",
+        }, start_response))
+        return captured["status"], body
+
+    def test_entra_placeholder_is_visible_disabled_and_never_a_route(self):
+        settings = self.make("Entra")
+        self.assertEqual(settings.sso_provider, "entra")
+        status, page = self.request("/login")
+        self.assertIn(b"Sign in with your Coastline Microsoft account", page)
+        self.assertIn(b"disabled", page)
+        self.assertIn(b"being connected with Coastline IT", page)
+        self.assertNotIn(b'action="/login/sso"', page)
+        self.assertLess(page.index(b"Coastline Microsoft account"), page.index(b"Access code"))
+        self.assertIn(b"<button class=primary>Continue</button>", page)
+        self.assertTrue(self.request("/login/sso", "POST")[0].startswith("404"))
+
+    def test_unknown_or_unset_provider_shows_nothing(self):
+        for value in ("", "okta"):
+            settings = self.make(value)
+            self.assertEqual(settings.sso_provider, "")
+            self.assertNotIn(b"Microsoft", self.request("/login")[1])
