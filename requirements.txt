@@ -1,3 +1,4 @@
 pypdf==6.9.1
 pillow==12.3.0
+weasyprint==70.0
 gunicorn==23.0.0

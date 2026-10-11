@@ -18,7 +18,8 @@ from urllib.parse import parse_qs
 from tina.remedy import MetadataRemediation, RemediationError
 from tina.ocr import OcrRemediation
 from tina.structure import StructureRemediation
-from tina.derive import extract_blocks
+from tina.derive import DerivationError, build_docmodel, extract_blocks
+from tina.docmodel import DocModelError, apply_figure_decisions, validate_docmodel
 
 from service.fixtures import synthetic_handout_pdf, synthetic_scan_pdf
 from service.repository import StagingRepository, now as repo_now
@@ -494,6 +495,75 @@ def _guided_structure_roles(form: dict[str, str]) -> dict[str, str]:
     return {str(index): form.get(f"role_{index}", "p") for index in range(count)}
 
 
+def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str], form: dict[str, str],
+                     problems: list[str], suggested_title: str) -> str:
+    """The accessible-copy form: title, language, optional structure roles, and
+    one human decision per figure. Nothing is pre-described for the person."""
+    action = f"/documents/{escape(document_id)}/accessible"
+    error_list = ""
+    if problems:
+        items = "".join(f"<li>{escape(problem)}</li>" for problem in problems)
+        error_list = f'<div class=notice role=alert tabindex=-1 id=accessible-errors><h2>Before we can make your copies</h2><ul>{items}</ul></div>'
+    title_value = form.get("title") or model.get("title") or suggested_title
+    language_value = form.get("language") or model.get("language") or "en-US"
+    figures = [block for block in model.get("blocks", []) if block.get("kind") == "figure"]
+    figure_rows = []
+    for block in figures:
+        number = block["figure"]
+        choice = form.get(f"fig_{number}_choice", "describe")
+        alt_value = form.get(f"fig_{number}_alt", "")
+        figure_rows.append(
+            f'<fieldset class=figure-decision><legend>Image {number} (page {block.get("page")})</legend>'
+            f'<img src="/documents/{escape(document_id)}/figure/{number}" alt="Image {number} from page {block.get("page")} of the original, shown so you can describe it" class=figure-preview>'
+            f'<label><input type=radio name=fig_{number}_choice value=describe{" checked" if choice != "decorative" else ""}> It carries meaning — I will describe it</label>'
+            f'<label for=fig_{number}_alt>Description</label>'
+            f'<textarea id=fig_{number}_alt name=fig_{number}_alt rows=2 maxlength=1000>{escape(alt_value)}</textarea>'
+            f'<label><input type=radio name=fig_{number}_choice value=decorative{" checked" if choice == "decorative" else ""}> It is decorative — screen readers should skip it</label>'
+            "</fieldset>"
+        )
+    figure_section = (
+        "<h2>Images</h2><p>Describe what each image tells a reader, or mark it decorative. The tool never writes these for you.</p>"
+        + "".join(figure_rows)
+    ) if figure_rows else "<p class=small>This document has no images that need a decision.</p>"
+    structure = ""
+    if blocks:
+        rows = []
+        for index, text in enumerate(blocks[:MAX_FORM_BLOCKS]):
+            preview = text.strip()
+            if len(preview) > 90:
+                preview = preview[:90].rstrip() + "…"
+            selected_role = form.get(f"role_{index}", "h1" if index == 0 else "p")
+            options = "".join(
+                f"<option value={value}{' selected' if value == selected_role else ''}>{label}</option>"
+                for value, label in STRUCTURE_ROLES
+            )
+            rows.append(
+                f"<div class=block-row><label for=role_{index}>Block {index + 1}</label>"
+                f"<select id=role_{index} name=role_{index}>{options}</select>"
+                f"<span class=block-preview>{escape(preview)}</span></div>"
+            )
+        structure = (
+            "<details><summary>Headings and lists (optional)</summary>"
+            "<p class=small>Confirm what each block is. Headings and lists you confirm become real structure in both copies.</p>"
+            f"<input type=hidden name=block_count value={len(blocks[:MAX_FORM_BLOCKS])}>" + "".join(rows) + "</details>"
+        )
+    return f'''<section class=panel aria-labelledby=accessible-heading>
+    <p class=eyebrow>Accessible copies</p>
+    <h1 id=accessible-heading>Get an accessible HTML page and a tagged PDF</h1>
+    <p class=lead>We rebuild your document from the structure and image descriptions you confirm, then recheck the new PDF with the same checker. The layout is re-flowed, not a pixel copy of the original.</p>
+    {error_list}
+    <form method=post action="{action}">
+    <label for=accessible-title>Document title</label><input id=accessible-title name=title value="{escape(title_value)}" required>
+    <label for=accessible-language>Primary language</label><input id=accessible-language name=language value="{escape(language_value)}" required>
+    {figure_section}
+    {structure}
+    <div class=actions><button name=format value=html>Download accessible HTML <span aria-hidden=true>↓</span></button>
+    <button name=format value=pdf class=secondary>Download tagged PDF <span aria-hidden=true>↓</span></button></div>
+    </form>
+    <p class=small>Both copies end with a short “About this copy” note: a review record, not a certification.</p>
+    <p><a href="/documents/{escape(document_id)}">Return to the document</a></p></section>'''
+
+
 def create_app(settings: ServiceSettings | None = None, repository: StagingRepository | None = None, worker: AssessmentWorker | None = None):
     settings = settings or ServiceSettings.from_environ()
     repository = repository or StagingRepository(settings.data_dir)
@@ -764,13 +834,15 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             f'<span class=seal-fineprint>{escape(datetime.now().strftime("%b %d, %Y"))}</span>'
             f'<span class=seal-fineprint>{escape(document["sha256"][:10])}…</span></div>'
         )
+        accessible_link = (f'<a class="button secondary" href="/documents/{escape(document_id)}/accessible">Get accessible HTML + tagged PDF <span aria-hidden=true>→</span></a>'
+                           if settings.produce_ready else "")
         content = f'''<div class=workspace-inner><div class=flow-wrap>
         <section class="panel ready-card" aria-labelledby=ready-heading data-journey=ready>
         <span class=ready-stars aria-hidden=true><svg class=rs1><use href="#i-star"/></svg><svg class=rs2><use href="#i-spark"/></svg><svg class=rs3><use href="#i-star"/></svg></span>
         <p class=eyebrow>Step 3 of 3</p>
         <h1 id=ready-heading>Your document is ready.</h1>
         <p class=lead>{escape(display)} — reviewed, with the final page carrying the review record.</p>
-        <div class=ready-actions>{download}</div>
+        <div class=ready-actions>{download}{accessible_link}</div>
         {badge}
         <p class=small>A review record, not a certification.</p></section>
         <div class=insights>{compare_section}{kpi_section}{improved_section}{look_section}{verified_section}{unchecked_section}</div>
@@ -1140,7 +1212,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         produce_action = f'<div class=actions><a class=button href="/documents/{escape(document_id)}/produced">Download the reviewed copy <span aria-hidden=true>↓</span></a></div>'
                     else:
                         produce_action = '<div class=actions><button disabled aria-disabled=true>Producing is not available yet</button></div><p class=small>The review-summary sealer is not installed in this environment. Everything above still works.</p>'
-                    produce_card = f'''<section class="panel produce-card" aria-labelledby=produce-heading><div class=produce-grid>{badge}<div class=produce-copy><p class=eyebrow>Produce</p><h2 id=produce-heading>Produce your document</h2><p>Download this version with one added "Review summary" page: the review date, a short evidence hash, where findings landed, and the fixes applied. Nothing else in the document changes.</p><p class=small>A review record, not a certification.</p>{produce_action}</div></div></section>'''
+                    accessible_action = (f'<p><a href="/documents/{escape(document_id)}/accessible">Or rebuild it as accessible HTML and a tagged PDF</a></p>'
+                                         if settings.produce_ready else "")
+                    produce_card = f'''<section class="panel produce-card" aria-labelledby=produce-heading><div class=produce-grid>{badge}<div class=produce-copy><p class=eyebrow>Produce</p><h2 id=produce-heading>Produce your document</h2><p>Download this version with one added "Review summary" page: the review date, a short evidence hash, where findings landed, and the fixes applied. Nothing else in the document changes.</p><p class=small>A review record, not a certification.</p>{produce_action}{accessible_action}</div></div></section>'''
                 findings = f'''<section class=panel aria-labelledby=findings-heading><p class=eyebrow>{'4 · Verify' if is_recheck else '2 · Understand'}</p><h2 id=findings-heading>Signals and next actions</h2>{_signals(result, job_state)}<div class=advanced><details><summary>Remediation provenance</summary><ul class=queue>{provenance}</ul></details></div></section>'''
                 if not is_recheck and job_state == "succeeded":
                     text_layer_open = bool(result) and any(
@@ -1167,6 +1241,102 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 layout_class = "document-layout arrive a4" if hosted_reveal else "document-layout"
                 content = f'''<div class=workspace-inner>{sprite}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else 'Synthetic demo only'}</span></header>{completion}{improved_story}{summary_row}{produce_card}<div class="{layout_class}">{findings}{fixlab}</div></div>'''
                 return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", _app_shell("check" if is_recheck else "improve", content, signed_in, dev, persona), refresh_head))
+            if len(pieces) in (3, 4) and pieces[2] in {"accessible", "figure"}:
+                # Accessible HTML + tagged PDF, re-authored from human-confirmed
+                # structure and figure decisions. Behind the login wall already;
+                # hosted environments keep it closed until HUB_ENABLE_PRODUCE.
+                not_found = _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>")
+                if not settings.produce_ready:
+                    return _response(start_response, "404 Not Found", not_found)
+                job = repository.latest_job(TENANT_ID, document_id)
+                if not job or job["state"] != "succeeded":
+                    return _redirect(start_response, f"/documents/{document_id}")
+                source = repository.document_bytes(TENANT_ID, document_id)
+                if pieces[2] == "figure":
+                    try:
+                        number = int(pieces[3]) if len(pieces) == 4 else 0
+                        figure = next(block for block in build_docmodel(source)["blocks"]
+                                      if block.get("kind") == "figure" and block.get("figure") == number)
+                    except (ValueError, StopIteration, DerivationError):
+                        return _response(start_response, "404 Not Found", not_found)
+                    image = base64.b64decode(figure["base64"])
+                    start_response("200 OK", [("Content-Type", figure["mime"]), ("Content-Length", str(len(image))),
+                                              ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
+                    return [image]
+                if len(pieces) != 3 or method not in {"GET", "POST"}:
+                    return _response(start_response, "404 Not Found", not_found)
+                try:
+                    blocks = extract_blocks(source)
+                except DerivationError:
+                    blocks = []
+                suggested = _suggested_title(document["filename"], document["source_kind"])
+                shell = (lambda inner: _educator_shell(inner, persona)) if educator else (lambda inner: _app_shell("improve", inner, signed_in, dev, persona))
+                form = _form(environ) if method == "POST" else {}
+                roles = None
+                if form.get("block_count"):
+                    try:
+                        roles = _guided_structure_roles(form)
+                    except RemediationError:
+                        roles = None
+                try:
+                    model = build_docmodel(source, roles=roles, title=form.get("title"), language=form.get("language"))
+                except DerivationError as error:
+                    inner = f"<div class=workspace-inner><section class=locked><h2>Accessible copies are not available for this document.</h2><p>{escape(str(error))}</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"
+                    return _response(start_response, "400 Bad Request", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                if method == "GET":
+                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, {}, [], suggested)}</div></div>"
+                    return _response(start_response, "200 OK", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                decisions = {}
+                for block in model["blocks"]:
+                    if block.get("kind") == "figure":
+                        number = block["figure"]
+                        if form.get(f"fig_{number}_choice") == "decorative":
+                            decisions[number] = {"decorative": True}
+                        else:
+                            decisions[number] = {"alt": form.get(f"fig_{number}_alt", "")}
+                model = apply_figure_decisions(model, decisions)
+                problems = validate_docmodel(model)
+                output_format = form.get("format") if form.get("format") in {"html", "pdf"} else "html"
+                if problems:
+                    inner = f"<div class=workspace-inner><div class=flow-wrap>{_accessible_form(document_id, model, blocks, form, problems, suggested)}</div></div>"
+                    return _response(start_response, "422 Unprocessable Entity", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                improvements: list[str] = []
+                node: dict[str, Any] | None = document
+                seen_ids: set[str] = set()
+                while node is not None and node["id"] not in seen_ids:
+                    seen_ids.add(node["id"])
+                    for row in repository.remediations(TENANT_ID, node["id"]):
+                        if row["kind"] != "seal":
+                            improvements.append(REMEDIATION_LABELS.get(row["kind"], row["kind"]))
+                    parent_id = node.get("parent_document_id")
+                    node = repository.document(TENANT_ID, parent_id) if parent_id else None
+                improvements += ["Rebuilt with confirmed structure and image decisions"]
+                try:
+                    from tina.author import AccessiblePackageProducer
+                    package = AccessiblePackageProducer.with_builtin_tools().produce(
+                        model, {"improvements": improvements, "review_date": repo_now()[:10]}, verify=False)
+                except (DocModelError, RuntimeError) as error:
+                    inner = f"<div class=workspace-inner><section class=locked><h2>Your copies were not produced.</h2><p>{escape(str(error))}</p><p><a href=\"/documents/{escape(document_id)}/accessible\">Back to accessible copies</a></p></section></div>"
+                    return _response(start_response, "503 Service Unavailable", _html_page("Accessible copies — Accessibility Hub", shell(inner)))
+                repository.audit(TENANT_ID, actor, "accessible_copy_produced", document_id, {
+                    "format": output_format,
+                    "source_sha256": package.get("source_sha256"),
+                    "result_sha256": package["pdf_sha256"] if output_format == "pdf" else package["html_sha256"],
+                    "figures": package.get("figures"), "headings": package.get("headings"),
+                })
+                safe_base = re.sub(r"[^A-Za-z0-9._ ()-]+", "-", _split_version(document["filename"])[0]).strip(" .-") or "document"
+                if output_format == "pdf":
+                    body, content_type = package["pdf"], "application/pdf"
+                else:
+                    body, content_type = package["html"].encode("utf-8"), "text/html; charset=utf-8"
+                start_response("200 OK", [
+                    ("Content-Type", content_type),
+                    ("Content-Disposition", f'attachment; filename="{safe_base}.accessible.{output_format}"'),
+                    ("Content-Length", str(len(body))),
+                    ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"),
+                ])
+                return [body]
             if len(pieces) == 3 and pieces[2] == "produced" and method == "GET":
                 # Development-only, auth-gated (we are already behind the login
                 # wall here). Applies nothing new: seals the CURRENT version's

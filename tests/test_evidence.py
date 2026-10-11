@@ -98,6 +98,8 @@ class OutcomeLanguageGovernanceTests(unittest.TestCase):
         "tina/lessons.py",
         "tina/structure.py",
         "tina/ocr.py",
+        "tina/docmodel.py",
+        "tina/author.py",
         "foundation_ads.json",
         "lesson_content.json",
     ]

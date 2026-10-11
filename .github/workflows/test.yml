@@ -18,10 +18,11 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements-real-intake.txt
-      - name: Install OCR engine
+      - name: Install OCR engine, PDF layout libraries, and fonts
         run: >-
           sudo apt-get update &&
           sudo apt-get install -y tesseract-ocr postgresql
+          libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core
       - name: Compile Python modules
         run: python -m compileall -q check_pdf.py local_reviewer.py tina service
       - name: Run unit tests

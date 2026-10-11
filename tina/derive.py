@@ -217,6 +217,79 @@ def _extract_html_draft(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_docmodel(
+    payload: bytes,
+    roles: dict[str, str] | None = None,
+    title: str | None = None,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """The structured document model (``tina/docmodel.py``) for a PDF.
+
+    Uses the same block order as the HTML draft, so the human-confirmed
+    ``roles`` index space (h1|h2|h3|p|li per block) is shared. Unconfirmed
+    blocks stay paragraphs, and every figure starts undecided: the model
+    records human structure and descriptions, it never infers them.
+    """
+    roles = {str(k): v for k, v in (roles or {}).items() if v in {"h1", "h2", "h3", "p", "li"}}
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception as error:
+        raise DerivationError(f"The PDF could not be parsed: {type(error).__name__}") from error
+    if reader.is_encrypted:
+        raise DerivationError("Encrypted PDFs are not converted; request an unencrypted source copy.")
+    info = reader.metadata or {}
+    root = reader.trailer.get("/Root", {})
+    try:
+        root = root.get_object()
+    except AttributeError:
+        pass
+    source_title = str(info.get("/Title") or "").strip()
+    source_language = str(root.get("/Lang") or "").strip()
+
+    blocks: list[dict[str, Any]] = []
+    block_index = 0
+    figure_number = 0
+    for page_number, page in enumerate(reader.pages, start=1):
+        for paragraph in _page_paragraphs(page.extract_text() or ""):
+            role = roles.get(str(block_index), "p")
+            block_index += 1
+            if role == "li":
+                if blocks and blocks[-1]["kind"] == "list" and blocks[-1].get("page") == page_number:
+                    blocks[-1]["items"].append(paragraph)
+                else:
+                    blocks.append({"kind": "list", "ordered": False, "items": [paragraph], "page": page_number})
+            elif role in {"h1", "h2", "h3"}:
+                blocks.append({"kind": "heading", "level": int(role[1]), "text": paragraph, "page": page_number})
+            else:
+                blocks.append({"kind": "paragraph", "text": paragraph, "page": page_number})
+        try:
+            images = list(page.images)
+        except Exception:
+            images = []
+        for image in images:
+            mime = _detect_image(image.data or b"")
+            if mime is None:
+                blocks.append({
+                    "kind": "notice",
+                    "text": f"An image on page {page_number} could not be carried into this copy; review it in the original document.",
+                    "page": page_number,
+                })
+                continue
+            figure_number += 1
+            blocks.append({
+                "kind": "figure", "figure": figure_number, "page": page_number, "mime": mime,
+                "base64": base64.b64encode(image.data).decode("ascii"),
+                "alt": None, "decorative": False, "caption": None,
+            })
+    return {
+        "version": "tina-docmodel/v1",
+        "title": (title or "").strip() or source_title,
+        "language": (language or "").strip() or source_language,
+        "source_sha256": f"sha256:{sha256(payload).hexdigest()}",
+        "blocks": blocks,
+    }
+
+
 def extract_images(payload: bytes, limit: int = 20) -> list[dict[str, Any]]:
     """Extract embedded images (browser-safe base64) so a human can see what
     they are describing. Read-only; never persisted."""
