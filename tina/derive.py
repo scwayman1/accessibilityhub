@@ -296,6 +296,44 @@ def _attach_links(blocks: list[dict[str, Any]], page_number: int, annotations: l
     return leftovers
 
 
+def _reading_order(reader: Any, payload: bytes):
+    """Yield (page_number, page, items) with items = [("text", str) | ("image", ImageFile)]
+    in reading order. Uses poppler's layout (whole paragraphs, images placed by
+    position) when available; otherwise plain extraction with images last."""
+    from tina.layout import page_layout
+
+    layout = page_layout(payload)
+    for page_number, page in enumerate(reader.pages, start=1):
+        try:
+            images = list(page.images)
+        except Exception:
+            images = []
+        if layout is None:
+            items = [("text", paragraph) for paragraph in _page_paragraphs(page.extract_text() or "")]
+            items += [("image", image) for image in images]
+        else:
+            page_layout_info = layout[page_number - 1]
+            placed = [(block["top"], 0, ("text", block["text"])) for block in page_layout_info["blocks"]]
+            tops = page_layout_info["image_tops"]
+            for order, image in enumerate(images):
+                name = str(getattr(image, "name", "")).rsplit(".", 1)[0].lstrip("/")
+                placed.append((tops.get(name, float("inf")), 1 + order, ("image", image)))
+            items = [item for _, _, item in sorted(placed, key=lambda entry: (entry[0], entry[1]))]
+        yield page_number, page, items
+
+
+def docmodel_blocks(payload: bytes) -> list[str]:
+    """The text blocks an accessible copy is built from, in the order
+    ``build_docmodel`` numbers them: the index space for confirmed roles."""
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=False)
+    except Exception as error:
+        raise DerivationError(f"The PDF could not be parsed: {type(error).__name__}") from error
+    if reader.is_encrypted:
+        raise DerivationError("Encrypted PDFs are not converted; request an unencrypted source copy.")
+    return [item for _, _, items in _reading_order(reader, payload) for kind, item in items if kind == "text"]
+
+
 def build_docmodel(
     payload: bytes,
     roles: dict[str, str] | None = None,
@@ -328,20 +366,36 @@ def build_docmodel(
     blocks: list[dict[str, Any]] = []
     block_index = 0
     figure_number = 0
-    for page_number, page in enumerate(reader.pages, start=1):
+    for page_number, page, items in _reading_order(reader, payload):
         page_start = len(blocks)
-        for paragraph in _page_paragraphs(page.extract_text() or ""):
-            role = roles.get(str(block_index), "p")
-            block_index += 1
-            if role == "li":
-                if blocks and blocks[-1]["kind"] == "list" and blocks[-1].get("page") == page_number:
-                    blocks[-1]["items"].append(paragraph)
+        for kind, item in items:
+            if kind == "text":
+                role = roles.get(str(block_index), "p")
+                block_index += 1
+                if role == "li":
+                    if blocks and blocks[-1]["kind"] == "list" and blocks[-1].get("page") == page_number:
+                        blocks[-1]["items"].append(item)
+                    else:
+                        blocks.append({"kind": "list", "ordered": False, "items": [item], "page": page_number})
+                elif role in {"h1", "h2", "h3"}:
+                    blocks.append({"kind": "heading", "level": int(role[1]), "text": item, "page": page_number})
                 else:
-                    blocks.append({"kind": "list", "ordered": False, "items": [paragraph], "page": page_number})
-            elif role in {"h1", "h2", "h3"}:
-                blocks.append({"kind": "heading", "level": int(role[1]), "text": paragraph, "page": page_number})
-            else:
-                blocks.append({"kind": "paragraph", "text": paragraph, "page": page_number})
+                    blocks.append({"kind": "paragraph", "text": item, "page": page_number})
+                continue
+            mime = _detect_image(item.data or b"")
+            if mime is None:
+                blocks.append({
+                    "kind": "notice",
+                    "text": f"An image on page {page_number} could not be carried into this copy; review it in the original document.",
+                    "page": page_number,
+                })
+                continue
+            figure_number += 1
+            blocks.append({
+                "kind": "figure", "figure": figure_number, "page": page_number, "mime": mime,
+                "base64": base64.b64encode(item.data).decode("ascii"),
+                "alt": None, "decorative": False, "caption": None,
+            })
         # Addresses written out in the text become links to themselves.
         for block in blocks[page_start:]:
             if block["kind"] == "paragraph":
@@ -354,25 +408,6 @@ def build_docmodel(
                 "kind": "paragraph", "page": page_number,
                 "text": f"Link on page {page_number}: {link['href']}",
                 "links": [{"text": link["href"], "href": link["href"], "source": "link_annotation"}],
-            })
-        try:
-            images = list(page.images)
-        except Exception:
-            images = []
-        for image in images:
-            mime = _detect_image(image.data or b"")
-            if mime is None:
-                blocks.append({
-                    "kind": "notice",
-                    "text": f"An image on page {page_number} could not be carried into this copy; review it in the original document.",
-                    "page": page_number,
-                })
-                continue
-            figure_number += 1
-            blocks.append({
-                "kind": "figure", "figure": figure_number, "page": page_number, "mime": mime,
-                "base64": base64.b64encode(image.data).decode("ascii"),
-                "alt": None, "decorative": False, "caption": None,
             })
     return {
         "version": "tina-docmodel/v1",

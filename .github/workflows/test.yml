@@ -22,7 +22,7 @@ jobs:
         run: >-
           sudo apt-get update &&
           sudo apt-get install -y tesseract-ocr postgresql
-          libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core
+          libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core poppler-utils
       - name: Install veraPDF validator (pinned, from Maven Central)
         run: scripts/install_verapdf.sh
       - name: Compile Python modules
