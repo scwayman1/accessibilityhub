@@ -55,7 +55,7 @@ Prepared [2026-10-11] from repository source. Transfer answers into the current 
 | MFA | TOTP required; SMS not sole factor (operator account) | `docs/clerk-owner-only-setup.md` | Implemented (dev instance config) |
 | Invite-only / no self-registration | Clerk Restricted mode | `docs/clerk-owner-only-setup.md` | Implemented (dev instance config) |
 | Multi-user roles (faculty, institution admin) | Current design is single owner; owner-scoped RLS generalizes per user, but no admin role | `schema.sql` | Gap |
-| Session management | Clerk short-lived tokens (real-intake); staging: HMAC-signed 8-hour cookie, HttpOnly, SameSite=Lax, Secure | `service/app.py` | Implemented |
+| Session management | Clerk short-lived tokens (real-intake); staging: HMAC-signed 20-hour cookie (revoked server-side at sign-out), HttpOnly, SameSite=Lax, Secure; sign-in and document actions rate limited | `service/app.py` | Implemented |
 | Deprovisioning | Manual Clerk revocation/ban documented for incidents | `docs/real-intake-operations.md` | Gap (routine offboarding procedure) |
 | Least privilege for infrastructure | Separate storage identities per function; scanner gets no other credentials; dormant worker gets none | `docs/real-intake-provisioning-checkpoint.md`, `render.real-intake.yaml` | Planned |
 

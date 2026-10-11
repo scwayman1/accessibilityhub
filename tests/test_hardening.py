@@ -96,3 +96,114 @@ class ServiceHardeningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnSurfaceAccessibilityTests(unittest.TestCase):
+    """Fixes for the defects our own accessibility conformance report found (ACR-1..4)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        settings = ServiceSettings("development", Path(self.temp.name), "synthetic-only-code", "s" * 48, ())
+        repository = StagingRepository(settings.data_dir)
+        worker = AssessmentWorker(repository)
+        worker.stop()  # keep jobs queued so the in-progress page is observable
+        self.app = create_app(settings, repository, worker)
+        worker.stop()
+        self.cookie = ""
+
+    def request(self, path, method="GET", form=None, extra_cookie=""):
+        query = ""
+        if "?" in path:
+            path, query = path.split("?", 1)
+        body = urlencode(form or {}).encode()
+        captured = {}
+
+        def start_response(status, headers):
+            captured["status"], captured["headers"] = status, dict(headers)
+
+        response = b"".join(self.app({
+            "REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": query,
+            "CONTENT_LENGTH": str(len(body)), "CONTENT_TYPE": "application/x-www-form-urlencoded",
+            "wsgi.input": io.BytesIO(body), "HTTP_COOKIE": "; ".join(c for c in (self.cookie, extra_cookie) if c),
+            "REMOTE_ADDR": "198.51.100.9",
+        }, start_response))
+        return captured["status"], captured["headers"], response
+
+    @staticmethod
+    def contrast(hex_a, hex_b="#FFFFFF"):
+        def luminance(value):
+            value = value.lstrip("#")
+            channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+            linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+            return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+        high, low = sorted((luminance(hex_a), luminance(hex_b)), reverse=True)
+        return (high + 0.05) / (low + 0.05)
+
+    def test_form_field_borders_meet_three_to_one(self):
+        import re
+
+        for surface, pattern in ((Path("service/app.py"), r"--field:(#[0-9A-Fa-f]{6})"),
+                                 (Path("local_reviewer.html"), r"--field:(#[0-9A-Fa-f]{6})")):
+            color = re.search(pattern, surface.read_text()).group(1)
+            self.assertGreaterEqual(self.contrast(color), 3.0, surface)
+            self.assertGreaterEqual(self.contrast(color, "#FAFAF8"), 3.0, surface)
+        self.assertIn("input,select,textarea { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--field)",
+                      Path("service/app.py").read_text())
+
+    def start_review(self):
+        _, headers, _ = self.request("/login", "POST", {"code": "synthetic-only-code"})
+        self.cookie = headers["Set-Cookie"].split(";", 1)[0]
+        _, headers, _ = self.request("/documents/synthetic", "POST", {"fixture": "handout"})
+        return headers["Location"]
+
+    def test_automatic_updates_can_be_paused_and_resumed(self):
+        location = self.start_review()
+        _, _, page = self.request(location)
+        self.assertIn(b'http-equiv="refresh"', page)
+        self.assertIn(f'href="{location}?updates=off">Pause automatic updates'.encode(), page)
+        _, _, paused = self.request(location + "?updates=off")
+        self.assertNotIn(b'http-equiv="refresh"', paused)
+        self.assertIn(b"Automatic updates are paused", paused)
+        self.assertIn(f'href="{location}">Resume automatic updates'.encode(), paused)
+
+    def test_animations_can_be_paused_on_every_page(self):
+        location = self.start_review()
+        _, _, page = self.request(location)
+        self.assertIn(b'action="/preferences/motion"', page)
+        status, headers, _ = self.request("/preferences/motion", "POST", {"state": "paused", "next": location})
+        self.assertTrue(status.startswith("303"))
+        self.assertEqual(headers["Location"], location)
+        motion = headers["Set-Cookie"].split(";", 1)[0]
+        self.assertEqual(motion, "hub_motion=paused")
+        _, headers, paused = self.request(location, extra_cookie=motion)
+        self.assertIn(b"<style id=motion-paused>", paused)
+        self.assertEqual(int(headers["Content-Length"]), len(paused))
+        self.assertIn(b"Play animations", paused)
+        _, _, other = self.request("/app", extra_cookie=motion)
+        self.assertIn(b"<style id=motion-paused>", other)
+
+    def test_motion_preference_redirect_stays_on_this_site(self):
+        for target in ("https://evil.example/", "//evil.example", "javascript:alert(1)", ""):
+            _, headers, _ = self.request("/preferences/motion", "POST", {"state": "paused", "next": target})
+            self.assertEqual(headers["Location"], "/app", target)
+
+    def test_sessions_last_twenty_hours(self):
+        import base64
+        import json as _json
+        import time as _time
+
+        _, headers, _ = self.request("/login", "POST", {"code": "synthetic-only-code"})
+        token = headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
+        payload = token.rsplit(".", 1)[0]
+        data = _json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertGreaterEqual(data["exp"] - _time.time(), 20 * 3600 - 60)
+
+    def test_workbench_fix_fields_have_visible_labels_and_a_pause_control(self):
+        source = Path("local_reviewer.html").read_text()
+        self.assertIn("lab.textContent='Description for link '", source)
+        self.assertIn("altLabel.textContent='Description for figure '", source)
+        self.assertIn("attestLabel.textContent='Describe the decision you made'", source)
+        self.assertNotIn("setAttribute('aria-label','Accessible description for link", source)
+        self.assertIn('id="pauseMotion"', source)
+        self.assertIn("html.motion-paused *", source)

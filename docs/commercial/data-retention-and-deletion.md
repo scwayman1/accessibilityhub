@@ -51,7 +51,7 @@ Prepared [2026-10-11] from source. Status key: **Implemented** = in code and tes
 | Surface | Data | Retention / deletion | Status |
 |---|---|---|---|
 | Hosted staging (synthetic only) | Synthetic documents in SQLite; audit rows | User can "Remove this synthetic record" (deletes version and rechecked copies); audit remains | Implemented (`service/repository.py` `delete_document_lineage`) |
-| Hosted staging session | 8-hour signed cookie | Expires after 8 h or sign-out | Implemented |
+| Hosted staging session | 20-hour signed cookie | Expires after 20 h; sign-out revokes it server-side | Implemented |
 | Local workbench | PDF processed in memory on the user's machine; outputs downloaded by user | Nothing sent to Provider | Implemented |
 | Local learning journey | `~/.coastline-studio/journey.json` (hash prefixes, rule IDs, attested decision text, timestamps) | User-controlled; delete the file | Implemented; **no in-app "clear history" control (Gap)** |
 

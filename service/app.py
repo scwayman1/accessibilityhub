@@ -47,6 +47,9 @@ UPLOAD_READ_CAP = MAX_UPLOAD_BYTES + 2 * 1024 * 1024  # payload plus multipart f
 PARTNER_ADS_PATH = Path(__file__).resolve().parents[1] / "partner_ads.json"
 STRUCTURE_ROLES = (("h1", "Heading level 1"), ("h2", "Heading level 2"), ("h3", "Heading level 3"), ("p", "Paragraph"), ("li", "List item"))
 MAX_FORM_BLOCKS = 80
+# 20 hours: WCAG 2.2.1's twenty-hour exception, so a working day never hits a
+# silent sign-out mid-task. Sign-out still revokes the session server-side.
+SESSION_SECONDS = 20 * 60 * 60
 MAX_PREVIEW_PAGES = 12
 
 _FALLBACK_FAVICON = (
@@ -279,7 +282,7 @@ def _educator_shell(content: str, persona: str) -> str:
 
 def _html_page(title: str, body: str, head: str = "") -> bytes:
     css = """
-    :root { /* Brand tokens — swap hexes here to retune the brand */ --brand:#F0563F; --brand-deep:#CF3A24; --brand-press:#B0301C; --navy:#FFFFFF; --sky:#ECE9E6; --ink:#232A33; --ink-soft:#3A434E; --muted:#5C6670; --canvas:#FFFFFF; --wash:#FAFAF8; --surface:#fff; --line:#ECE9E6; --line-strong:#D9D4CF; --cream:#FFF6EE; --blush:#FFE3D6; --blush-line:#F3CDBB; --sun:#FFC94D; --teal:#0E7C66; --attention:#A83224; --attention-soft:#FBE2DC; --review:#0C6172; --review-soft:#DDF0F2; --success:#1D6E4C; --success-soft:#DFF2E6; --success-line:#B7DFC6; --neutral:#565E68; --neutral-soft:#ECEDEF; --display:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --shadow:0 8px 24px rgba(35,42,51,.06); }
+    :root { /* Brand tokens — swap hexes here to retune the brand */ --brand:#F0563F; --brand-deep:#CF3A24; --brand-press:#B0301C; --navy:#FFFFFF; --sky:#ECE9E6; --ink:#232A33; --ink-soft:#3A434E; --muted:#5C6670; --canvas:#FFFFFF; --wash:#FAFAF8; --surface:#fff; --line:#ECE9E6; --line-strong:#D9D4CF; --field:#857D75; --cream:#FFF6EE; --blush:#FFE3D6; --blush-line:#F3CDBB; --sun:#FFC94D; --teal:#0E7C66; --attention:#A83224; --attention-soft:#FBE2DC; --review:#0C6172; --review-soft:#DDF0F2; --success:#1D6E4C; --success-soft:#DFF2E6; --success-line:#B7DFC6; --neutral:#565E68; --neutral-soft:#ECEDEF; --display:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --shadow:0 8px 24px rgba(35,42,51,.06); }
     * { box-sizing:border-box } html { background:var(--canvas) } body { margin:0; color:var(--ink); background:var(--canvas); font:16px/1.55 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; } a { color:inherit } button,input,textarea,select { font:inherit } :focus-visible { outline:0; box-shadow:0 0 0 2px #fff,0 0 0 5px var(--brand-deep) } .skip-link { position:fixed; z-index:50; top:10px; left:10px; padding:10px 16px; color:white; background:var(--brand-deep); border-radius:999px; transform:translateY(-160%); } .skip-link:focus { transform:none; }
     h1,h2,h3 { margin:0; color:var(--ink); font-family:var(--display); letter-spacing:-.02em; overflow-wrap:anywhere } h1 { max-width:760px; font-size:clamp(32px,4vw,52px); line-height:1.05; font-weight:800 } h2 { font-size:24px; line-height:1.15; font-weight:800 } h3 { font-size:16px; line-height:1.25; font-weight:750 } p { margin:0; overflow-wrap:anywhere } .eyebrow { margin:0 0 8px; color:var(--brand-deep); font-size:11px; font-weight:850; letter-spacing:.14em; text-transform:uppercase; } .lead { max-width:690px; margin-top:14px; color:var(--muted); font-size:17px; } .small { color:var(--muted); font-size:12px; }
     header { background:var(--navy); color:var(--ink); border-bottom:3px solid var(--sky); } .shell { width:min(1240px,calc(100% - 48px)); margin:auto; } header nav { min-height:72px; display:flex; align-items:center; justify-content:space-between; gap:24px; } .brand-top { display:flex; align-items:center; gap:14px; text-decoration:none; } .brand-top img { display:block; width:188px; height:auto; filter:brightness(0) opacity(.85); } .nav-note { color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
@@ -294,9 +297,9 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .section-heading { display:flex; justify-content:space-between; gap:18px; align-items:end; margin:36px 0 14px } .section-heading h2 { font-size:21px } .queue { display:grid; gap:10px; min-width:0; margin:15px 0 0; padding:0; list-style:none } .queue li { min-width:0; padding:13px 16px; border:1px solid var(--line); border-radius:12px; background:white; box-shadow:var(--shadow) } .queue a { font-weight:800; text-decoration-color:var(--brand); text-decoration-thickness:2px; text-underline-offset:4px } .empty-state { color:var(--muted); border-style:dashed; text-align:center }
     .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:9px; color:var(--muted); font-size:12px } .tag { display:inline-flex; align-items:center; padding:4px 10px; color:var(--ink-soft); border:1px solid var(--line-strong); border-radius:999px; background:var(--wash); font-size:10px; font-weight:850; letter-spacing:.05em; text-transform:uppercase } .mono { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:0 }
     .document-layout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; align-items:start } .signal { display:grid; grid-template-columns:152px minmax(0,1fr); gap:18px; padding:20px 0; border-bottom:1px solid var(--line) } .signal:last-of-type { border-bottom:0 } .signal-heading { display:flex; align-items:center; gap:9px } .signal-icon { flex:0 0 auto; display:grid; place-items:center; width:25px; height:25px; border:1px solid currentColor; border-radius:50%; font-weight:900; line-height:1 } .chip { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; padding:5px 10px; border:1px solid currentColor; border-radius:999px; font-size:10px; font-weight:850; letter-spacing:.055em; line-height:1.1; text-transform:uppercase } .needs_attention .chip { background:var(--attention-soft) } .review_recommended .chip { background:var(--review-soft) } .verified_signal .chip { background:var(--success-soft) } .not_assessed .chip { background:var(--neutral-soft) } .needs_attention .chip,.needs_attention .signal-icon { color:var(--attention) } .review_recommended .chip,.review_recommended .signal-icon { color:var(--review) } .verified_signal .chip,.verified_signal .signal-icon { color:var(--success) } .not_assessed .chip,.not_assessed .signal-icon { color:var(--neutral) } .signal p { margin-top:5px; color:var(--muted); font-size:13px }
-    .fixlab { position:sticky; top:24px; padding:24px; border:1px solid var(--line); border-top:4px solid var(--brand); border-radius:16px; background:white; box-shadow:var(--shadow) } .fixlab h2 { font-size:22px } .fixlab p { margin-top:7px; color:var(--muted); font-size:13px } label { display:block; margin:15px 0 6px; color:var(--ink); font-size:13px; font-weight:760 } input,select { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--line-strong); border-radius:10px; background:white } input[type=checkbox] { width:auto; margin-right:7px } details { margin-top:12px; padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } summary { color:var(--ink); cursor:pointer; font-weight:760 } .advanced { margin-top:18px }
+    .fixlab { position:sticky; top:24px; padding:24px; border:1px solid var(--line); border-top:4px solid var(--brand); border-radius:16px; background:white; box-shadow:var(--shadow) } .fixlab h2 { font-size:22px } .fixlab p { margin-top:7px; color:var(--muted); font-size:13px } label { display:block; margin:15px 0 6px; color:var(--ink); font-size:13px; font-weight:760 } input,select,textarea { width:100%; padding:11px 12px; color:var(--ink); border:1px solid var(--field); border-radius:10px; background:white } input[type=checkbox] { width:auto; margin-right:7px } details { margin-top:12px; padding:13px 14px; border:1px solid var(--line); border-radius:12px; background:var(--wash) } summary { color:var(--ink); cursor:pointer; font-weight:760 } .advanced { margin-top:18px }
     .completeness { border-style:dashed; background:var(--wash) } .completeness ul { margin:8px 0 0; padding-left:19px; color:var(--muted); font-size:12px } .completeness li { margin:4px 0 }
-    .figure-decision { margin:14px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:white } .figure-decision legend { font-weight:700; padding:0 6px } .figure-decision label { display:flex; align-items:center; gap:8px; margin:8px 0 4px } .figure-decision input[type=radio] { width:auto; min-height:0; margin:0; flex:none } .figure-decision textarea { width:100%; box-sizing:border-box; font:inherit; padding:8px; border:1px solid var(--line); border-radius:8px } .figure-preview { display:block; max-width:min(100%,360px); max-height:260px; margin:6px 0; border:1px solid var(--line); border-radius:8px } .page-previews figure { display:inline-block; margin:8px 10px 8px 0; vertical-align:top } .page-previews img { width:180px; height:auto; border:1px solid var(--line); border-radius:6px } .page-previews figcaption { font-size:12px; color:var(--muted) } #accessible-errors { border-left:4px solid var(--attention); padding:10px 14px; margin:14px 0; background:var(--attention-soft) }
+    .figure-decision { margin:14px 0; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:white } .figure-decision legend { font-weight:700; padding:0 6px } .figure-decision label { display:flex; align-items:center; gap:8px; margin:8px 0 4px } .figure-decision input[type=radio] { width:auto; min-height:0; margin:0; flex:none } .page-controls { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:10px; font-size:14px } .page-controls form { margin:0 } .page-controls button { min-height:36px; padding:0 14px; font-size:13px } .figure-decision textarea { width:100%; box-sizing:border-box; font:inherit; padding:8px; border:1px solid var(--field); border-radius:8px } .figure-preview { display:block; max-width:min(100%,360px); max-height:260px; margin:6px 0; border:1px solid var(--line); border-radius:8px } .page-previews figure { display:inline-block; margin:8px 10px 8px 0; vertical-align:top } .page-previews img { width:180px; height:auto; border:1px solid var(--line); border-radius:6px } .page-previews figcaption { font-size:12px; color:var(--muted) } #accessible-errors { border-left:4px solid var(--attention); padding:10px 14px; margin:14px 0; background:var(--attention-soft) }
     .block-row { margin:10px 0; padding:9px 11px; border:1px solid var(--line); border-radius:10px; background:white } .block-row label { margin:0 0 4px; font-size:11px; letter-spacing:.09em; text-transform:uppercase } .block-row select { min-height:36px; padding:6px 8px; font-size:13px } .block-preview { display:block; margin-top:5px; color:var(--muted); font-size:12px }
     .progress-card { max-width:760px; margin:34px auto; padding:38px; text-align:center } .progress-orb { position:relative; display:grid; place-items:center; width:72px; height:72px; margin:0 auto 20px; border:8px solid var(--blush); border-top-color:var(--brand); border-radius:50%; animation:spin 1.1s linear infinite } .progress-orb:after { content:""; width:26px; height:34px; border:2px solid var(--brand-deep); border-radius:6px; background:white } .progress-list { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:26px 0 0; padding:0; list-style:none; text-align:left } .progress-list li { padding:13px; color:var(--muted); border:1px solid var(--line); border-radius:12px; background:var(--wash); font-size:12px } .progress-list li strong { display:block; color:var(--ink); font-size:13px } .progress-list li.active { border-color:var(--blush-line); background:var(--blush) } .progress-list li.done { border-color:var(--success-line); background:var(--success-soft) } .progress-list li.done strong { color:var(--success) }
     .completion { display:flex; gap:14px; align-items:flex-start; margin-bottom:20px; padding:20px 22px; color:var(--success); border:1px solid var(--success-line); border-radius:16px; background:var(--success-soft) } .completion-mark { flex:0 0 auto; display:grid; place-items:center; width:36px; height:36px; color:white; border-radius:12px; background:var(--success); font-weight:900 } .completion h2 { color:var(--success); font-size:21px } .completion p { margin-top:4px; color:var(--success) }
@@ -383,7 +386,7 @@ def _simple_page(title: str, inner: str) -> bytes:
 
 def _session_token(settings: ServiceSettings, actor: str = ACTOR_ID, display: str = "") -> str:
     # sid lets sign-out revoke this exact session on the server.
-    session = {"actor": actor, "tenant": TENANT_ID, "exp": int(time.time()) + 28800, "sid": secrets.token_urlsafe(12)}
+    session = {"actor": actor, "tenant": TENANT_ID, "exp": int(time.time()) + SESSION_SECONDS, "sid": secrets.token_urlsafe(12)}
     if display:
         session["display"] = display
     payload = base64.urlsafe_b64encode(json.dumps(session).encode()).decode().rstrip("=")
@@ -625,6 +628,59 @@ def _accessible_form(document_id: str, model: dict[str, Any], blocks: list[str],
     <p><a href="/documents/{escape(document_id)}">Return to the document</a></p></section>'''
 
 
+MOTION_PAUSE_STYLE = "<style id=motion-paused>*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}</style>"
+
+
+def _page_controls(document_path: str, updates_paused: bool, motion_paused: bool, refreshing: bool = True) -> str:
+    """WCAG 2.2.1 / 2.2.2 controls for pages that move or refresh by themselves:
+    pause the 5-second automatic updates, and pause animations (a cookie the
+    service honors on every page). Plain links and forms; no script needed."""
+    parts = []
+    if refreshing:
+        if updates_paused:
+            parts.append(f'<span>Automatic updates are paused.</span><a href="{escape(document_path)}">Resume automatic updates</a>')
+        else:
+            parts.append(f'<a href="{escape(document_path)}?updates=off">Pause automatic updates</a>')
+    state, label = ("playing", "Play animations") if motion_paused else ("paused", "Pause animations")
+    parts.append(
+        f'<form method=post action="/preferences/motion"><input type=hidden name=state value={state}>'
+        f'<input type=hidden name=next value="{escape(document_path + ("?updates=off" if updates_paused else ""))}">'
+        f'<button class=secondary>{label}</button></form>'
+    )
+    return f'<div class=page-controls>{"".join(parts)}</div>'
+
+
+def _safe_next(value: str) -> str:
+    """Same-origin relative paths only; anything else returns to the workspace."""
+    value = (value or "").strip()
+    if not value.startswith("/") or value.startswith("//") or "\\" in value or any(c in value for c in "\r\n"):
+        return "/app"
+    return value
+
+
+def _with_motion_preference(app: Callable) -> Callable:
+    """When the visitor paused animations, add a stop-all-animation style to every HTML page."""
+    def application(environ: dict[str, Any], start_response: Callable):
+        cookies = environ.get("HTTP_COOKIE", "")
+        if "hub_motion=paused" not in [part.strip() for part in cookies.split(";")]:
+            return app(environ, start_response)
+        captured: dict[str, Any] = {}
+
+        def capture(status: str, headers: list[tuple[str, str]], exc_info: Any = None):
+            captured["status"], captured["headers"] = status, list(headers)
+            return lambda data: None
+
+        body = b"".join(app(environ, capture))
+        headers = captured.get("headers", [])
+        if any(name.lower() == "content-type" and value.startswith("text/html") for name, value in headers) and b"</head>" in body:
+            body = body.replace(b"</head>", MOTION_PAUSE_STYLE.encode() + b"</head>", 1)
+            headers = [(name, str(len(body)) if name.lower() == "content-length" else value) for name, value in headers]
+        start_response(captured.get("status", "500 Internal Server Error"), headers)
+        return [body]
+
+    return application
+
+
 def create_app(settings: ServiceSettings | None = None, repository: StagingRepository | None = None, worker: AssessmentWorker | None = None):
     settings = settings or ServiceSettings.from_environ()
     repository = repository or StagingRepository(settings.data_dir)
@@ -705,7 +761,8 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                                      "Applied to this copy, with a full record of the change."))
         return improvements
 
-    def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str):
+    def _educator_document_view(start_response: Callable, document: dict[str, Any], persona: str,
+                                updates_paused: bool = False, motion_paused: bool = False):
         """Steps 2 and 3 of the educator flow: one processing screen, one ready
         screen. The pipeline moves the teacher forward with no clicks at all."""
         document_id = document["id"]
@@ -740,14 +797,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             data-journey=processing data-stage={stage} data-status-url="/documents/{escape(document_id)}/status.json">{_JOURNEY_SCENE}
             <div class=journey-status role=status aria-live=polite aria-atomic=true>
             <p class=eyebrow>Step 2 of 3</p><h2 data-journey-headline>{escape(status_line)}</h2>
-            <p>{escape(display)} · This page updates by itself every few seconds.</p></div>
-            <ol class=progress-list data-journey-stages>{items}</ol></section>
+            <p>{escape(display)} · {'Automatic updates are paused.' if updates_paused else 'This page updates by itself every few seconds.'}</p></div>
+            <ol class=progress-list data-journey-stages>{items}</ol>{_page_controls(f"/documents/{document_id}", updates_paused, motion_paused)}</section>
             {_sponsored_card(fly=True)}</div></div>'''
             # With scripting available the journey script polls the status
             # endpoint and carries the page forward without reloads; the
             # meta refresh stays as the complete no-JS fallback.
             return _response(start_response, "200 OK", _html_page("Transforming your document — Accessibility Hub",
-                             _educator_shell(progress, persona), "<noscript><meta http-equiv=\"refresh\" content=\"5\"></noscript>"))
+                             _educator_shell(progress, persona), "" if updates_paused else "<noscript><meta http-equiv=\"refresh\" content=\"5\"></noscript>"))
         result = (job or {}).get("result")
         if job_state == "failed" or not result:
             content = f'''<div class=workspace-inner><div class=flow-wrap><section class="panel ready-card">
@@ -957,6 +1014,12 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             payload = json.dumps(settings.health_payload()).encode()
             start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(payload))), ("Cache-Control", "no-store")])
             return [payload]
+        if path == "/preferences/motion" and method == "POST":
+            form = _form(environ)
+            paused = form.get("state") == "paused"
+            cookie = ("hub_motion=paused; Path=/; SameSite=Lax; HttpOnly; Max-Age=31536000" if paused
+                      else "hub_motion=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0")
+            return _redirect(start_response, _safe_next(form.get("next", "")), [("Set-Cookie", cookie)])
         if path == "/logout" and method == "POST":
             ending = _session_data(environ, settings)
             if ending and ending.get("sid"):
@@ -994,6 +1057,8 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         if session and session.get("sid") and repository.session_revoked(str(session["sid"])):
             session = None
         signed_in = session is not None
+        updates_paused = "updates=off" in environ.get("QUERY_STRING", "").split("&")
+        motion_paused = "hub_motion=paused" in [part.strip() for part in environ.get("HTTP_COOKIE", "").split(";")]
         persona = (session or {}).get("display") or ""
         actor = (session or {}).get("actor") or ACTOR_ID
         dev = settings.environment == "development"
@@ -1182,7 +1247,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 start_response("200 OK", [("Content-Type", "image/png"), ("Content-Length", str(len(image))), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")])
                 return [image]
             if len(pieces) == 2 and method == "GET" and educator and "view=advanced" not in environ.get("QUERY_STRING", ""):
-                return _educator_document_view(start_response, document, persona)
+                return _educator_document_view(start_response, document, persona, updates_paused, motion_paused)
             if len(pieces) == 2 and method == "GET":
                 job = repository.latest_job(TENANT_ID, document_id)
                 result = job.get("result") if job else None
@@ -1191,7 +1256,9 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 is_recheck = bool(document.get("parent_document_id"))
                 # A slow vanilla refresh keeps this JavaScript-free page useful
                 # while the assessment runs; it stops once the job is terminal.
-                refresh_head = "" if terminal else "<meta http-equiv=\"refresh\" content=\"5\">"
+                refresh_head = "" if terminal or updates_paused else "<meta http-equiv=\"refresh\" content=\"5\">"
+                controls = _page_controls(f"/documents/{document_id}", updates_paused, motion_paused, refreshing=not terminal)
+                checks_line = "Automatic updates are paused; use Refresh now to check." if updates_paused else "This page checks again every five seconds."
                 remediation_rows = repository.remediations(TENANT_ID, document_id)
                 provenance_items = []
                 for row in remediation_rows:
@@ -1234,14 +1301,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                         <section class="panel progress-card journey-card" aria-label="{escape(phase_label)}" data-stage=improving>{_JOURNEY_SCENE}
                         <div class=journey-status role=status aria-live=polite aria-atomic=true>
                         <p class=eyebrow>Deterministic review</p><h2>{escape(headline)}</h2>
-                        <p>This usually takes a few seconds. This page checks again every five seconds.</p></div>
+                        <p>This usually takes a few seconds. {escape(checks_line)}</p></div>
                         <ol class=progress-list>{items}</ol>
-                        <div class=actions><a class="button secondary" href="/documents/{escape(document_id)}">Refresh now</a></div>
+                        <div class=actions><a class="button secondary" href="/documents/{escape(document_id)}{'?updates=off' if updates_paused else ''}">Refresh now</a></div>{controls}
                         <p class=small>{escape(gate_line)}</p></section>{_sponsored_card(fly=True)}</div>'''
                         return _response(start_response, "200 OK", _html_page("Review in progress — Accessibility Hub", _app_shell(current_step, progress, signed_in, dev, persona), refresh_head))
                     phase_label = "Checking your improved copy" if is_recheck else ("Reviewing your document" if is_upload else "Reviewing the sample")
                     prepared_step = "<strong>Upload received</strong>Stays on this machine" if is_upload else "<strong>Sample prepared</strong>Bundled content only"
-                    progress = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / review</p><h1>{escape(phase_label)}</h1><p class=lead>{escape(document['filename'])}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>In progress</span></header><section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div><p class=eyebrow>Deterministic review</p><h2>Looking for useful accessibility signals…</h2><p>This usually takes a few seconds. This page checks again every five seconds.</p><ol class=progress-list><li>{prepared_step}</li><li class=active><strong>Reviewing signals</strong>Metadata, structure, and text</li><li><strong>Building next steps</strong>Plain-language guidance</li></ol><div class=actions><a class="button secondary" href="/documents/{escape(document_id)}">Refresh now</a></div><p class=small>Review first — the Fix Lab opens once this review completes.</p></section>{_sponsored_card()}</div>'''
+                    progress = f'''<div class=workspace-inner><header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / review</p><h1>{escape(phase_label)}</h1><p class=lead>{escape(document['filename'])}</p></div><span class=top-status><span class=status-dot aria-hidden=true></span>In progress</span></header><section class="panel progress-card" role=status aria-live=polite aria-atomic=true><div class=progress-orb aria-hidden=true></div><p class=eyebrow>Deterministic review</p><h2>Looking for useful accessibility signals…</h2><p>This usually takes a few seconds. {escape(checks_line)}</p><ol class=progress-list><li>{prepared_step}</li><li class=active><strong>Reviewing signals</strong>Metadata, structure, and text</li><li><strong>Building next steps</strong>Plain-language guidance</li></ol><div class=actions><a class="button secondary" href="/documents/{escape(document_id)}{'?updates=off' if updates_paused else ''}">Refresh now</a></div>{controls}<p class=small>Review first — the Fix Lab opens once this review completes.</p></section>{_sponsored_card()}</div>'''
                     return _response(start_response, "200 OK", _html_page("Review in progress — Accessibility Hub", _app_shell(current_step, progress, signed_in, dev, persona), refresh_head))
                 resolved_count = 0
                 if is_recheck and result:
@@ -1549,4 +1616,4 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     message = "Something in this request could not be read. Return to the document and try again."
                 return _response(start_response, "400 Bad Request", _simple_page("Repair needs a closer look", f"<div class=shell><section class=locked><h2>This change was not applied.</h2><p>{escape(message)}</p><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"))
         return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
-    return harden(app, hosted=settings.environment == "staging")
+    return harden(_with_motion_preference(app), hosted=settings.environment == "staging")

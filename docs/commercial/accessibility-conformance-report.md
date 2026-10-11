@@ -66,8 +66,8 @@ Conformance values marked "(code inspection)" are provisional. VPAT 2.5 guidance
 | 2.1.1 Keyboard | Not Evaluated | Controls are native buttons/inputs/links; sample toggles are `<button aria-pressed>`; reading-order changes use up/down buttons rather than drag. Full keyboard walk-through pending. |
 | 2.1.2 No Keyboard Trap | Not Evaluated | No modal dialogs or custom focus traps observed in code. |
 | 2.1.4 Character Key Shortcuts | Supports (code inspection) | No single-character shortcuts defined. |
-| 2.2.1 Timing Adjustable | Partially Supports (code inspection) | Hosted staging session expires after 8 hours without a warning or extension; hosted progress page's no-JavaScript fallback uses `<meta http-equiv="refresh" content="5">` (WCAG failure technique F41). With JavaScript, status polling updates in place without reload. |
-| 2.2.2 Pause, Stop, Hide | Partially Supports (code inspection) | While a review runs, decorative animations (progress sweep, pulsing orb, journey animation) and sponsor cards appear without an on-page pause control. All animations stop under the OS "reduce motion" setting (`prefers-reduced-motion`, test-enforced on every surface); sponsor content is excluded from live regions. Add an on-page pause control. |
+| 2.2.1 Timing Adjustable | Supports (code inspection; AT testing pending) | Progress pages that refresh every 5 seconds carry a "Pause automatic updates" link (refresh removed; "Refresh now" and "Resume" remain). Sessions last 20 hours (the criterion's twenty-hour exception). With JavaScript, status polling updates in place without reload. |
+| 2.2.2 Pause, Stop, Hide | Supports (code inspection; AT testing pending) | Processing pages carry a "Pause animations" control (hosted: a form that sets a preference the service honors on every page, no script needed; workbench: a toggle button). Pausing updates also stops sponsor-card rotation. Animations also stop under the OS "reduce motion" setting. |
 | 2.3.1 Three Flashes or Below Threshold | Not Evaluated | Animations are slow (≥0.8 s cycles) by code; not measured. |
 | 2.4.1 Bypass Blocks | Supports (code inspection) | "Skip to main content" link to `#main-content` on all four surfaces (test-enforced). |
 | 2.4.2 Page Titled | Supports (code inspection) | Descriptive `<title>` on static pages and hosted pages (e.g., "Sign in — Accessibility Hub"). |
@@ -82,7 +82,7 @@ Conformance values marked "(code inspection)" are provisional. VPAT 2.5 guidance
 | 3.2.2 On Input | Not Evaluated | — |
 | 3.2.6 Consistent Help | Not Evaluated | No help mechanism yet identified across pages. |
 | 3.3.1 Error Identification | Supports (code inspection) | Errors rendered in text with `role="alert"`/assertive; non-PDF selection rejected with a plain-language message (test-enforced). |
-| 3.3.2 Labels or Instructions | Partially Supports (code inspection) | File input and access-code field have visible labels. Workbench AI-setup and fix fields use `<label for>`. Fix Lab link-description inputs are named by `aria-label` plus placeholder text; confirm whether adjacent on-screen text serves as a persistent visible label. |
+| 3.3.2 Labels or Instructions | Supports (code inspection; AT testing pending) | File input and access-code field have visible labels. Workbench AI-setup and fix fields use `<label for>`. Fix Lab link-description, figure-description, and decision fields now have visible `<label for>` labels; placeholders are examples only. |
 | 3.3.7 Redundant Entry | Not Evaluated | — |
 | 4.1.1 Parsing | Supports | Obsolete in WCAG 2.2; treated as satisfied per W3C errata. |
 | 4.1.2 Name, Role, Value | Not Evaluated | Native elements, `aria-pressed`, `aria-current`, `aria-controls` used; AT verification pending. |
@@ -99,7 +99,7 @@ Conformance values marked "(code inspection)" are provisional. VPAT 2.5 guidance
 | 1.4.4 Resize Text | Not Evaluated | 16px relative-friendly base; 200% zoom untested. |
 | 1.4.5 Images of Text | Supports (code inspection) | Logo image only (exempt). |
 | 1.4.10 Reflow | Not Evaluated | 320px layout constraints test-enforced for the workbench file input; narrow-layout media queries present; full 320 CSS px check pending. |
-| 1.4.11 Non-text Contrast | Partially Supports (code inspection) | Focus indicator (3px #CF3A24) is 4.9:1 on white. **Form-field borders use #D9D4CF on white (1.5:1), below 3:1** in the workbench and hosted workspace. |
+| 1.4.11 Non-text Contrast | Supports (code inspection; AT testing pending) | Focus indicator (3px #CF3A24) is 4.9:1 on white. Form-field borders use #857D75 (4.05:1 on white, 3.87:1 on the wash background) in the workbench and hosted workspace; a test enforces at least 3:1. |
 | 1.4.12 Text Spacing | Not Evaluated | — |
 | 1.4.13 Content on Hover or Focus | Not Evaluated | No custom tooltips identified. |
 | 2.4.5 Multiple Ways | Not Evaluated | — |
@@ -120,10 +120,10 @@ Conformance values marked "(code inspection)" are provisional. VPAT 2.5 guidance
 
 | ID | Defect | Criterion | Target |
 |---|---|---|---|
-| ACR-1 | Form-field border contrast 1.5:1 | 1.4.11 | [DATE] |
-| ACR-2 | No pause control for animations/sponsor content during processing | 2.2.2 | [DATE] |
-| ACR-3 | No-JS meta refresh on progress page; 8-hour session expiry without warning | 2.2.1 | [DATE] |
-| ACR-4 | Link-description inputs may lack a persistent visible label | 3.3.2 | [DATE] |
+| ACR-1 | Form-field border contrast 1.5:1 | 1.4.11 | Fixed 2026-10-11 (#857D75, 4.05:1) |
+| ACR-2 | No pause control for animations/sponsor content during processing | 2.2.2 | Fixed 2026-10-11 (Pause animations control) |
+| ACR-3 | No-JS meta refresh on progress page; 8-hour session expiry without warning | 2.2.1 | Fixed 2026-10-11 (Pause automatic updates; 20-hour sessions) |
+| ACR-4 | Link-description inputs may lack a persistent visible label | 3.3.2 | Fixed 2026-10-11 (visible labels) |
 | ACR-5 | Complete AT testing (NVDA+Firefox, JAWS+Chrome, VoiceOver macOS/iOS, keyboard-only, 200%/400% zoom) | All "Not Evaluated" | Before pilot start |
 
 ## Legal disclaimer
