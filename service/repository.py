@@ -180,8 +180,17 @@ class StagingRepository:
             ).fetchall()
         return [{**dict(row), "provenance": json.loads(row["provenance_json"])} for row in rows]
 
+    def expired_roots(self, cutoff: str) -> list[dict[str, Any]]:
+        """Original documents (no parent) created before ``cutoff`` (ISO-8601 UTC)."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT id, tenant_id, created_at FROM documents WHERE parent_document_id IS NULL AND created_at < ? ORDER BY created_at",
+                (cutoff,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def delete_document_lineage(self, tenant_id: str, document_id: str) -> int:
-        """Delete a synthetic document and its derived copies; audit remains outside this lineage."""
+        """Delete a document and its derived copies; audit remains outside this lineage."""
         with self._connect() as db:
             rows = db.execute(
                 """WITH RECURSIVE lineage(id) AS (

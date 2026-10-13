@@ -61,7 +61,7 @@ def validate_pdf_upload(filename: str, payload: bytes) -> None:
     if not payload.startswith(b"%PDF-"):
         raise UploadValidationError("This file does not look like a PDF.")
     if len(payload) > MAX_PDF_BYTES:
-        raise UploadValidationError("This PDF exceeds the 50 MB local review limit.")
+        raise UploadValidationError("This PDF exceeds the 50 MB review limit.")
 
 
 def run_local_review(

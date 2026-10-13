@@ -142,6 +142,9 @@ image is undecided.
 - Staging: the **Get accessible HTML + tagged PDF** link opens
   `/documents/{id}/accessible`. Hosted environments keep it closed unless
   `HUB_ENABLE_PRODUCE=true`.
+- Hosted real-PDF uploads: `HUB_ACCEPT_UPLOADS=true` opens the teacher flow for
+  signed-in users (never on a public workspace). Documents and their copies are
+  deleted automatically after `HUB_RETENTION_DAYS` (default 365).
 - The copy is re-flowed rather than a pixel replica. It ends with an "About
   this copy" note: a review record, not a certification.
 

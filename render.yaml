@@ -26,7 +26,8 @@ services:
         sync: false
       # Dashboard-managed opt-in. Only the exact value "true" opens the
       # bundled-synthetic-fixture route in hosted staging; leave unset to keep
-      # hosted document creation closed. It never enables uploads or real intake.
+      # hosted document creation closed. It never enables uploads on its own
+      # (HUB_ACCEPT_UPLOADS does).
       - key: HUB_ALLOW_HOSTED_SYNTHETIC
         sync: false
       # Pilot hardening: the workspace requires sign-in. Only the exact value
@@ -38,6 +39,15 @@ services:
       # libraries producing PDFs needs.
       - key: HUB_ENABLE_PRODUCE
         value: "true"
+      # Real PDF uploads for signed-in users (the commercial product). Only
+      # the exact value "true" opens them, and never while HUB_PUBLIC_ACCESS
+      # is "true". Files live on the disk above.
+      - key: HUB_ACCEPT_UPLOADS
+        value: "true"
+      # Every document (original and copies) is deleted automatically this
+      # many days after upload; each deletion is audited.
+      - key: HUB_RETENTION_DAYS
+        value: "365"
       - key: HUB_DATA_DIR
         value: /var/data
       # Shows a disabled "Sign in with your Coastline Microsoft account"

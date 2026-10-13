@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,10 @@ from service.repository import StagingRepository
 # Rules the educator pipeline may resolve automatically — metadata only, ever.
 AUTO_FIX_RULES = frozenset({"PDF.METADATA.TITLE", "PDF.METADATA.LANGUAGE"})
 AUTO_FIX_LANGUAGE = "en-US"
+
+# How often the worker looks for documents past the retention period.
+RETENTION_SWEEP_SECONDS = 3600
+RETENTION_ACTOR = "retention-policy"
 
 # Width of the page-1 thumbnails rendered for the before/after comparison.
 THUMBNAIL_WIDTH = 560
@@ -242,10 +248,12 @@ def normalize_report(report: dict[str, Any]) -> dict[str, Any]:
 
 
 class AssessmentWorker:
-    def __init__(self, repository: StagingRepository) -> None:
+    def __init__(self, repository: StagingRepository, retention_days: int | None = None) -> None:
         self.repository = repository
+        self.retention_days = retention_days
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._next_sweep = 0.0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -260,8 +268,34 @@ class AssessmentWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            if self.retention_days and time.monotonic() >= self._next_sweep:
+                self._next_sweep = time.monotonic() + RETENTION_SWEEP_SECONDS
+                self.sweep_retention()
             if not self.run_once():
                 self._stop.wait(0.08)
+
+    def sweep_retention(self, now: datetime | None = None) -> int:
+        """Delete every document lineage whose original is older than the
+        retention period. Each deletion is audited; the audit trail itself
+        holds no document content. Returns the number of lineages deleted."""
+        if not self.retention_days:
+            return 0
+        cutoff = ((now or datetime.now(UTC)) - timedelta(days=self.retention_days)).isoformat()
+        deleted = 0
+        try:
+            for root in self.repository.expired_roots(cutoff):
+                count = self.repository.delete_document_lineage(root["tenant_id"], root["id"])
+                if count:
+                    deleted += 1
+                    self.repository.audit(root["tenant_id"], RETENTION_ACTOR, "document_expired", root["id"], {
+                        "deleted_document_count": count, "retention_days": self.retention_days,
+                        "created_at": root["created_at"],
+                    })
+        except Exception:
+            # Storage trouble during a sweep never stops reviews; the next
+            # sweep retries.
+            return deleted
+        return deleted
 
     def run_once(self) -> bool:
         try:
