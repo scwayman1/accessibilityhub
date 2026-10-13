@@ -23,7 +23,7 @@ Prepared [2026-10-11] from repository source. Transfer answers into the current 
 |---|---|---|---|
 | Written information security policy | Engineering runbooks exist; no formal organizational ISP | `docs/real-intake-operations.md` | Gap |
 | Incident response plan | Draft plan + technical runbook | `incident-response-plan.md`, `docs/real-intake-operations.md` | Planned (tabletop not exercised) |
-| Data retention/deletion policy | Manual owner deletion with verification; gaps listed | `data-retention-and-deletion.md` | Planned |
+| Data retention/deletion policy | Hosted pilot service: automatic deletion 365 days after upload (audited), plus user deletion at any time. Gaps listed. | `data-retention-and-deletion.md` §0 | Implemented (pilot service) |
 | Privacy policy | Draft | `privacy-policy.md` | Planned |
 | Accessibility (VPAT/ACR) | Draft ACR, AT testing pending | `accessibility-conformance-report.md` | Planned |
 | Business continuity / disaster recovery plan | Tombstone-aware restore procedure only | `docs/real-intake-operations.md` | Gap (no BCP/DR plan, RTO/RPO undefined) |
@@ -40,6 +40,7 @@ Prepared [2026-10-11] from repository source. Transfer answers into the current 
 | Third-party penetration test | Not performed | — | Gap |
 | Input validation for uploads | Filename, MIME, size (≤25 MiB), PDF signature, page/stream limits; DB-enforced object keys | `service/real_intake/upload_gate.py`, `schema.sql` | Implemented (code); live Planned |
 | Malware scanning | Self-hosted ClamAV 1.4.5 (digest-pinned), private service, fail-closed on unavailable/stale/ambiguous results; scan before parsing | `service/real_intake/clamav.py`, `deploy/clamav/Dockerfile` | Implemented (code); live Planned |
+| Malware scanning: hosted pilot service | **Not scanned.** The pilot service (real PDF uploads since 2026-10-13) checks file type and size only. The worker runs inside the web container as an unprivileged user, with time limits. ClamAV applies to the locked real-intake path. | `service/app.py`, `scripts/container_start.sh` | **Gap (disclosed)** |
 | Parser isolation / no egress | Worker must have infrastructure-enforced outbound denial; Render isolation does not block internet egress, so processing remains blocked | `docs/real-intake-provisioning-checkpoint.md` | Gap (blocking) |
 | Security headers | CSP `default-src 'self'`, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` | `service/app.py` | Implemented (staging) |
 | Rate limiting / abuse | Per-action limits, hashed owner keys, fail-closed when counter store unavailable | `service/real_intake/rate_limit.py` | Implemented (code); adapter Planned |

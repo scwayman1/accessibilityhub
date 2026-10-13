@@ -7,8 +7,9 @@ import json
 import os
 import re
 import secrets
+import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from html import escape
 from pathlib import Path
@@ -46,6 +47,9 @@ SSO_ACTOR = "jordan-rivera"
 SSO_DISPLAY = "Jordan Rivera, Faculty"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 UPLOAD_READ_CAP = MAX_UPLOAD_BYTES + 2 * 1024 * 1024  # payload plus multipart framing
+# Uploads stop (with an honest message) before the data disk fills: room for
+# one largest upload, its improved copy, and working headroom.
+MIN_FREE_BYTES = 2 * MAX_UPLOAD_BYTES + 50 * 1024 * 1024
 PARTNER_ADS_PATH = Path(__file__).resolve().parents[1] / "partner_ads.json"
 STRUCTURE_ROLES = (("h1", "Heading level 1"), ("h2", "Heading level 2"), ("h3", "Heading level 3"), ("p", "Paragraph"), ("li", "List item"))
 MAX_FORM_BLOCKS = 80
@@ -295,7 +299,7 @@ def _html_page(title: str, body: str, head: str = "") -> bytes:
     .main-workspace { min-width:0; padding:36px clamp(22px,4vw,64px) 72px } .workspace-inner { width:min(1120px,100%); margin:0 auto } .page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:28px } .page-header-copy { min-width:0 } .top-status { display:inline-flex; align-items:center; gap:8px; min-height:30px; padding:5px 12px; color:var(--brand-press); border:1px solid var(--blush-line); border-radius:999px; background:var(--blush); font-size:11px; font-weight:800; white-space:nowrap }
     .panel { padding:26px; border:1px solid var(--line); border-radius:16px; background:var(--surface); box-shadow:var(--shadow) } .panel p { margin-top:7px; color:var(--muted) } .hero-card { position:relative; overflow:hidden; padding:38px; border-top:4px solid var(--brand) } .hero-card:after { content:""; position:absolute; right:-72px; bottom:-100px; width:230px; height:230px; border:44px solid var(--blush); border-radius:50%; opacity:.75 } .hero-copy { position:relative; z-index:1 }
     .actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:20px } button,.button { max-width:100%; min-height:46px; display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:10px 22px; color:white; border:1px solid var(--brand-deep); border-radius:999px; background:var(--brand-deep); font-weight:800; text-align:center; white-space:normal; text-decoration:none; cursor:pointer; transition:transform .14s ease,box-shadow .14s ease,background .14s ease } button:hover,.button:hover { background:var(--brand-press); border-color:var(--brand-press); box-shadow:0 8px 18px rgba(240,86,63,.22); transform:translateY(-1px) } button.secondary,.button.secondary { color:var(--ink); border-color:var(--ink); background:white } button.secondary:hover,.button.secondary:hover { color:var(--brand-press); background:var(--cream) }
-    .upload-note { display:flex; gap:10px; align-items:flex-start; margin-top:18px; padding:14px 16px; color:var(--muted); border:1px dashed var(--line-strong); border-radius:12px; background:var(--wash); font-size:12px } .upload-note strong { color:var(--ink) }
+    .upload-note { display:flex; gap:10px; align-items:flex-start; margin-top:18px; padding:14px 16px; color:var(--muted); border:1px dashed var(--line-strong); border-radius:12px; background:var(--wash); font-size:12px } .upload-note strong { color:var(--ink) } .retention-card { margin-top:18px } .retention-card details { margin-top:12px } [data-retention] { margin-top:12px }
     .section-heading { display:flex; justify-content:space-between; gap:18px; align-items:end; margin:36px 0 14px } .section-heading h2 { font-size:21px } .queue { display:grid; gap:10px; min-width:0; margin:15px 0 0; padding:0; list-style:none } .queue li { min-width:0; padding:13px 16px; border:1px solid var(--line); border-radius:12px; background:white; box-shadow:var(--shadow) } .queue a { font-weight:800; text-decoration-color:var(--brand); text-decoration-thickness:2px; text-underline-offset:4px } .empty-state { color:var(--muted); border-style:dashed; text-align:center }
     .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:9px; color:var(--muted); font-size:12px } .tag { display:inline-flex; align-items:center; padding:4px 10px; color:var(--ink-soft); border:1px solid var(--line-strong); border-radius:999px; background:var(--wash); font-size:10px; font-weight:850; letter-spacing:.05em; text-transform:uppercase } .mono { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:0 }
     .document-layout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; align-items:start } .signal { display:grid; grid-template-columns:152px minmax(0,1fr); gap:18px; padding:20px 0; border-bottom:1px solid var(--line) } .signal:last-of-type { border-bottom:0 } .signal-heading { display:flex; align-items:center; gap:9px } .signal-icon { flex:0 0 auto; display:grid; place-items:center; width:25px; height:25px; border:1px solid currentColor; border-radius:50%; font-weight:900; line-height:1 } .chip { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; padding:5px 10px; border:1px solid currentColor; border-radius:999px; font-size:10px; font-weight:850; letter-spacing:.055em; line-height:1.1; text-transform:uppercase } .needs_attention .chip { background:var(--attention-soft) } .review_recommended .chip { background:var(--review-soft) } .verified_signal .chip { background:var(--success-soft) } .not_assessed .chip { background:var(--neutral-soft) } .needs_attention .chip,.needs_attention .signal-icon { color:var(--attention) } .review_recommended .chip,.review_recommended .signal-icon { color:var(--review) } .verified_signal .chip,.verified_signal .signal-icon { color:var(--success) } .not_assessed .chip,.not_assessed .signal-icon { color:var(--neutral) } .signal p { margin-top:5px; color:var(--muted); font-size:13px }
@@ -751,7 +755,7 @@ def _apply_ocr_review(model: dict[str, Any], scans: list[int], form: dict[str, s
 def create_app(settings: ServiceSettings | None = None, repository: StagingRepository | None = None, worker: AssessmentWorker | None = None):
     settings = settings or ServiceSettings.from_environ()
     repository = repository or StagingRepository(settings.data_dir)
-    worker = worker or AssessmentWorker(repository)
+    worker = worker or AssessmentWorker(repository, retention_days=settings.retention_days)
     login_limiter = RateLimiter(limit=10, window=300)
     action_limiter = RateLimiter(limit=60, window=300)
     trust_proxy = settings.environment == "staging"
@@ -763,6 +767,46 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             f"<p>Please wait about {int(retry_after // 60) + 1} minute(s), then try again.</p></section></div>"),
             [("Retry-After", str(int(retry_after)))])
     worker.start()
+
+    def _lineage_root(document: dict[str, Any]) -> dict[str, Any]:
+        """The original upload (or sample) a version descends from."""
+        current, seen = document, set()
+        while current.get("parent_document_id") and current["id"] not in seen:
+            seen.add(current["id"])
+            parent = repository.document(TENANT_ID, current["parent_document_id"])
+            if parent is None:
+                break
+            current = parent
+        return current
+
+    def _storage_has_room() -> bool:
+        """Room for one more upload and its improved copies, with headroom."""
+        try:
+            return shutil.disk_usage(repository.data_dir).free >= MIN_FREE_BYTES
+        except OSError:
+            return False
+
+    hosted_workspace = settings.environment == "staging"
+
+    def _storage_note() -> str:
+        days = settings.retention_days
+        shared = (" Everyone who signs in here can see these documents." if hosted_workspace else "")
+        return (f'<p class=small data-retention>Documents are kept for {days} days, then deleted automatically. '
+                f'You can delete one sooner from its page.{shared}</p>')
+
+    def _retention_section(document: dict[str, Any]) -> str:
+        root = _lineage_root(document)
+        try:
+            created = datetime.fromisoformat(root["created_at"])
+            until = (created + timedelta(days=settings.retention_days)).strftime("%B %d, %Y").replace(" 0", " ")
+        except (KeyError, ValueError):
+            until = ""
+        kept = f"Kept until {escape(until)}, then deleted automatically." if until else f"Kept for {settings.retention_days} days, then deleted automatically."
+        return (f'<section class="panel retention-card" aria-labelledby=retention-heading><h2 id=retention-heading>Keeping this document</h2>'
+                f'<p>{kept} The original and every copy go together.</p>'
+                f'<details><summary>Delete it now</summary><form method=post action="/documents/{escape(root["id"])}/delete">'
+                f'<input type=hidden name=scope value=all><label><input type=checkbox name=confirmed value=yes required> '
+                f'Delete the original and every copy of this document.</label><div class=actions><button class=secondary>Delete now</button></div></form></details></section>')
 
     def _ocr_in_lineage(document: dict[str, Any]) -> bool:
         current: dict[str, Any] | None = document
@@ -1019,7 +1063,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         unchecked_section = f'''<section class="panel insight-card insight-unchecked" aria-labelledby=unchecked-heading>
         <div class=insight-head><span class=icon-chip aria-hidden=true>–</span><h2 id=unchecked-heading>Not checked by this tool</h2></div>
         <p class=unchecked-strip>{escape(strip)}. These are judgment calls this tool leaves to a person.</p>{completeness_note}</section>'''
-        if _seal_available():
+        if _seal_available() and settings.produce_ready:
             download = f'<a class="button ready-download" href="/documents/{escape(document_id)}/produced">Download your document <span aria-hidden=true>↓</span></a>'
         else:
             download = '<button disabled aria-disabled=true>Download is not available yet</button>'
@@ -1043,6 +1087,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         <div class=insights>{compare_section}{kpi_section}{improved_section}{look_section}{verified_section}{unchecked_section}</div>
         <div class=ready-actions><a class="button secondary" href="/app">Transform another document <span aria-hidden=true>→</span></a>
         <a class=quiet-link href="/documents/{escape(document_id)}?view=advanced">Advanced tools</a></div>
+        {_retention_section(document)}
         </div></div>'''
         return _response(start_response, "200 OK", _html_page("Your document is ready — Accessibility Hub", _educator_shell(content, persona)))
 
@@ -1059,10 +1104,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         if path == "/assets/journey.js" and method == "GET":
             # First-party journey enhancement script; the only script any page
             # references, served same-origin to satisfy the CSP exactly.
-            # Development-only, like every educator surface that references it:
-            # hosted environments keep their exact prior routes and serve no
-            # script assets at all.
-            if settings.environment != "development":
+            # Served wherever the educator flow exists (development, or a hosted
+            # workspace with uploads open); other hosted environments keep
+            # their exact prior routes and serve no script assets at all.
+            if not settings.uploads_ready:
                 start_response("404 Not Found", [("Content-Length", "0")])
                 return [b""]
             asset = Path(__file__).resolve().parents[1] / "assets" / "journey.js"
@@ -1103,7 +1148,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     sso = ('<form method=post action="/login/sso"><div class=actions><button>Sign in with your Coastline Microsoft account</button></div></form>'
                            '<p class=sso-caption>Demo sign-in — no Microsoft account is contacted.</p>'
                            '<div class=login-divider aria-hidden=true>or</div>')
-                return _response(start_response, "200 OK", _simple_page("Sign in — Accessibility Hub", f"<div class=login><section class=panel><p class=eyebrow>Access</p><h2>Enter the staging workspace</h2>{note}{sso}<p>Enter your access code to continue.</p><form method=post><label for=code>Access code</label><input id=code name=code type=password autocomplete=current-password required><div class=actions><button class={'secondary' if sso and settings.environment == 'development' else 'primary'}>Continue</button></div></form></section></div>"))
+                return _response(start_response, "200 OK", _simple_page("Sign in — Accessibility Hub", f"<div class=login><section class=panel><p class=eyebrow>Access</p><h2>{'Sign in to the Accessibility Hub' if settings.hosted_uploads_open else 'Enter the staging workspace'}</h2>{note}{sso}<p>Enter your access code to continue.</p><form method=post><label for=code>Access code</label><input id=code name=code type=password autocomplete=current-password required><div class=actions><button class={'secondary' if sso and settings.environment == 'development' else 'primary'}>Continue</button></div></form></section></div>"))
             return _response(start_response, "503 Service Unavailable", _simple_page("Access setup required", "<div class=login><section class=locked><h2>Access setup is incomplete</h2><p>This service remains closed until a staging access code and session secret are configured.</p></section></div>"))
         if path == "/login" and method == "POST":
             retry = login_limiter.hit(f"login:{client_address(environ, trust_proxy)}")
@@ -1135,10 +1180,11 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
         # script, or an intake surface. Every boundary check keys off the
         # environment and session exactly as before.
         hosted = settings.environment == "staging"
-        # The three-step educator flow exists only for the demo SSO session in
-        # development. Access-code sessions — and every hosted environment —
-        # keep the classic surface byte-for-byte.
-        educator = dev and settings.synthetic_intake_ready and signed_in and actor == SSO_ACTOR
+        # The three-step educator flow (with real PDF upload) is for the demo
+        # SSO session in development, and for every signed-in session on a
+        # hosted workspace that opened uploads (HUB_ACCEPT_UPLOADS). Anything
+        # else keeps the classic sample-only surface byte-for-byte.
+        educator = signed_in and settings.uploads_ready and ((dev and actor == SSO_ACTOR) or hosted)
         if not settings.public_access and not signed_in:
             return _redirect(start_response, "/login")
         if method == "POST" and path.startswith("/documents"):
@@ -1182,11 +1228,14 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     f'<section class=recent-quiet aria-labelledby=recent-heading><h2 id=recent-heading>Recent</h2>'
                     f'<ul class=recent-list>{recent_rows}</ul></section>'
                 ) if recent_rows else ""
+                sample_footer = ('<form class=sample-footer method=post action="/documents/synthetic"><input type=hidden name=fixture value=handout><p>No file handy? <button class=link-button>Try a sample document.</button></p></form>'
+                                 if settings.synthetic_intake_ready else "")
                 drop = f'''<div class=workspace-inner>
                 <section class="panel hero-card drop-hero" aria-labelledby=drop-heading><div class=hero-copy>
                 <p class=eyebrow>Three simple steps</p>
                 <h1 id=drop-heading>Make your course material ready for students.</h1>
                 <p class=lead>Drop in a PDF (up to 50&nbsp;MB). We review it, apply safe improvements to a copy, and hand back a version that is ready to share.</p>
+                {_storage_note()}
                 <form method=post action="/documents/upload" enctype="multipart/form-data">
                 <div class=dropzone data-dropzone>
                 <svg class=drop-glyph aria-hidden=true><use href="#i-doc"/></svg>
@@ -1196,7 +1245,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 <div class=actions><button class=ready-download>Transform my document <span aria-hidden=true>→</span></button></div>
                 </form></div></section>
                 {recent}
-                <form class=sample-footer method=post action="/documents/synthetic"><input type=hidden name=fixture value=handout><p>No file handy? <button class=link-button>Try a sample document.</button></p></form>
+                {sample_footer}
                 </div>'''
                 return _response(start_response, "200 OK", _html_page("Accessibility Hub — Ready for students", _educator_shell(drop, persona)))
             rows = ""
@@ -1227,14 +1276,15 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
             {hero}
             <section aria-labelledby=recent-heading><div class=section-heading><div><p class=eyebrow>Workspace</p><h2 id=recent-heading>Document records</h2></div><p class=small>One row per document. Improved copies appear as new versions of the same row.</p></div><ul class=queue>{rows}</ul></section></div>'''
             return _response(start_response, "200 OK", _html_page("Accessibility Hub staging", _app_shell("add", content, signed_in, dev, persona)))
-        if path == "/documents/upload" and method == "POST" and settings.environment == "development" and actor == SSO_ACTOR:
-            # Development-only real upload, and only for the demo educator
-            # session established by the stub SSO. In staging — and for
-            # access-code sessions anywhere — this branch is never entered, so
-            # the request falls through to the document-id lookup below and
-            # 404s: the route does not exist outside the educator dev session.
-            if not settings.synthetic_intake_ready:
-                return _response(start_response, "503 Service Unavailable", _simple_page("Accessibility Hub", "<div class=shell><section class=locked><h2>This workspace is not ready to accept an upload.</h2><p>Configure the access code and session secret first.</p></section></div>"))
+        if path == "/documents/upload" and method == "POST" and educator:
+            # Real upload exists only for educator sessions: the demo SSO
+            # session in development, or a signed-in session on a hosted
+            # workspace that opened uploads. For anyone else this branch is
+            # never entered, so the request falls through to the document-id
+            # lookup below and 404s: the route does not exist.
+            if not _storage_has_room():
+                repository.audit(TENANT_ID, actor, "upload_refused_storage_full", None, {})
+                return _response(start_response, "507 Insufficient Storage", _simple_page("Workspace storage is full", "<div class=shell><section class=locked><h2>This workspace is out of storage space.</h2><p>Nothing was uploaded. Delete documents you no longer need, or ask your Hub administrator to add storage.</p><p><a href=\"/app\">Back to the workspace</a></p></section></div>"))
             try:
                 declared = int(environ.get("CONTENT_LENGTH") or 0)
             except (TypeError, ValueError):
@@ -1337,7 +1387,10 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     label = REMEDIATION_LABELS.get(row["kind"], row["kind"])
                     provenance_items.append(f"<li><strong>{escape(label)}</strong> <span class=tag>{escape(row['kind'])}</span> · {escape(_when(row['created_at']))}{hashes}</li>")
                 provenance = "".join(provenance_items) or "<li>No recheck has been applied to this version.</li>"
-                cleanup = f"<details><summary>Remove this synthetic record</summary><p>This removes this version and any rechecked copies from the local staging store.</p><form method=post action=\"/documents/{escape(document_id)}/delete\"><label><input type=checkbox name=confirmed value=yes required> I want to remove these synthetic records.</label><div class=actions><button class=secondary>Remove records</button></div></form></details>"
+                if _lineage_root(document).get("source_kind") == "educator_upload":
+                    cleanup = f"<details><summary>Delete this version</summary><p>This deletes this version and any rechecked copies made from it. Documents are deleted automatically {settings.retention_days} days after upload.</p><form method=post action=\"/documents/{escape(document_id)}/delete\"><label><input type=checkbox name=confirmed value=yes required> I want to delete these versions.</label><div class=actions><button class=secondary>Delete versions</button></div></form></details>"
+                else:
+                    cleanup = f"<details><summary>Remove this synthetic record</summary><p>This removes this version and any rechecked copies from the local staging store.</p><form method=post action=\"/documents/{escape(document_id)}/delete\"><label><input type=checkbox name=confirmed value=yes required> I want to remove these synthetic records.</label><div class=actions><button class=secondary>Remove records</button></div></form></details>"
                 if not terminal:
                     current_step = "check" if is_recheck else "review"
                     is_upload = document["source_kind"] == "educator_upload"
@@ -1457,7 +1510,7 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                     fixlab = f'''<aside class=fixlab><p class=eyebrow>Next step</p><h2>{'Compare the result' if is_recheck else 'Try another sample'}</h2><p>{'The rechecked copy is stored as a separate version of the same lineage.' if is_recheck else 'This assessment did not complete, so no fixes were applied.'}</p><div class=actions>{parent_link}<a class="button secondary" href="/app">Workspace</a></div><div class=advanced>{cleanup}</div></aside>'''
                 sprite = _JOURNEY_SPRITE if hosted_reveal else ""
                 layout_class = "document-layout arrive a4" if hosted_reveal else "document-layout"
-                content = f'''<div class=workspace-inner>{sprite}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else 'Synthetic demo only'}</span></header>{completion}{improved_story}{summary_row}{produce_card}<div class="{layout_class}">{findings}{fixlab}</div></div>'''
+                content = f'''<div class=workspace-inner>{sprite}<header class=page-header><div class=page-header-copy><p class=eyebrow><a href="/app">Workspace</a> / {escape('recheck' if is_recheck else 'document')}</p><h1>{header_title}</h1><p class=lead>{header_lead}</p><div class=meta><span class=tag>{escape(source_label)}</span><span class=tag>{escape(state_label)}</span><span>{escape(document['filename'])}</span><span class=mono>{escape(document['sha256'][:16])}…</span></div></div><span class=top-status><span class=status-dot aria-hidden=true></span>{'Local workspace' if dev else ('Pilot workspace' if settings.uploads_ready else 'Synthetic demo only')}</span></header>{completion}{improved_story}{summary_row}{produce_card}<div class="{layout_class}">{findings}{fixlab}</div></div>'''
                 return _response(start_response, "200 OK", _html_page("Document review — Accessibility Hub", _app_shell("check" if is_recheck else "improve", content, signed_in, dev, persona), refresh_head))
             if len(pieces) in (3, 4) and pieces[2] in {"accessible", "figure", "page"}:
                 # Accessible HTML + tagged PDF, re-authored from human-confirmed
@@ -1584,10 +1637,11 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 ])
                 return [body]
             if len(pieces) == 3 and pieces[2] == "produced" and method == "GET":
-                # Development-only, auth-gated (we are already behind the login
-                # wall here). Applies nothing new: seals the CURRENT version's
-                # bytes with one appended Review summary page and serves it.
-                if settings.environment != "development":
+                # Auth-gated (we are already behind the login wall here):
+                # development, or a hosted educator session with downloads
+                # open. Applies nothing new: seals the CURRENT version's bytes
+                # with one appended Review summary page and serves it.
+                if not (dev or (educator and settings.produce_ready)):
                     return _response(start_response, "404 Not Found", _simple_page("Not found", "<div class=shell><h1>Page not found</h1><p class=lead><a href=\"/app\">Return to the workspace</a></p></div>"))
                 job = repository.latest_job(TENANT_ID, document_id)
                 if not job or job["state"] != "succeeded" or not job.get("result"):
@@ -1643,10 +1697,16 @@ def create_app(settings: ServiceSettings | None = None, repository: StagingRepos
                 ])
                 return [sealed]
             if len(pieces) == 3 and pieces[2] == "delete" and method == "POST":
-                if _form(environ).get("confirmed") != "yes":
+                form = _form(environ)
+                if form.get("confirmed") != "yes":
                     return _response(start_response, "400 Bad Request", _simple_page("Removal needs confirmation", f"<div class=shell><section class=locked><h2>This record is still here.</h2><p><a href=\"/documents/{escape(document_id)}\">Return to the document</a></p></section></div>"))
-                deleted = repository.delete_document_lineage(TENANT_ID, document_id)
-                repository.audit(TENANT_ID, actor, "synthetic_document_deleted", document_id, {"deleted_document_count": deleted})
+                root = _lineage_root(document)
+                action = "document_deleted" if root.get("source_kind") == "educator_upload" else "synthetic_document_deleted"
+                # The educator flow removes the whole document (its original
+                # and every copy); the classic view removes this version down.
+                target = root if form.get("scope") == "all" else document
+                deleted = repository.delete_document_lineage(TENANT_ID, target["id"])
+                repository.audit(TENANT_ID, actor, action, target["id"], {"deleted_document_count": deleted})
                 return _redirect(start_response, "/app")
             if len(pieces) == 4 and pieces[2] == "remediate" and method == "POST":
                 kind, form = pieces[3], _form(environ)

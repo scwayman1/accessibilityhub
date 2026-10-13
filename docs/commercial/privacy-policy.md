@@ -56,7 +56,7 @@ We share information only with service providers that process it on our behalf u
 
 ## 7. Retention and deletion
 
-See `data-retention-and-deletion.md`. Summary: documents are kept until the document owner deletes them (current policy `manual-owner-deletion-only`), or as the institution's agreement specifies. Deletion removes the original, clean copy, fixed copies, evidence, jobs, findings, and consents, then verifies their absence. A content-free deletion record and audit events are kept to prove the deletion happened. Backups expire on the provider's schedule [MAXIMUM BACKUP-EXPIRY DELAY — TO BE DOCUMENTED].
+See `data-retention-and-deletion.md`. Summary: on the hosted pilot service, documents and every copy made from them are deleted automatically **365 days after upload**. A user can delete them sooner, or the institution's agreement can set a different period. Deletion removes the original, clean copy, fixed copies, evidence, jobs, findings, and consents, then verifies their absence. A content-free deletion record and audit events are kept to prove the deletion happened. Backups expire on the provider's schedule [MAXIMUM BACKUP-EXPIRY DELAY — TO BE DOCUMENTED].
 
 ## 8. Security
 

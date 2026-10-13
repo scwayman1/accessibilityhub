@@ -17,6 +17,19 @@ HOSTED_CONTROL_VARS = (
     "HUB_AUDIT_SINK",
 )
 
+DEFAULT_RETENTION_DAYS = 365
+MAX_RETENTION_DAYS = 3650
+
+
+def _retention_days(value: str | None) -> int:
+    """Whole days a document is kept before automatic deletion (default 365)."""
+    text = (value or "").strip()
+    if not text:
+        return DEFAULT_RETENTION_DAYS
+    if not text.isdigit() or not 1 <= int(text) <= MAX_RETENTION_DAYS:
+        raise ValueError(f"HUB_RETENTION_DAYS must be a whole number of days from 1 to {MAX_RETENTION_DAYS}.")
+    return int(text)
+
 
 @dataclass(frozen=True)
 class ServiceSettings:
@@ -29,6 +42,8 @@ class ServiceSettings:
     public_access: bool = False
     enable_produce: bool = False
     sso_provider: str = ""
+    accept_uploads: bool = False
+    retention_days: int = DEFAULT_RETENTION_DAYS
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> "ServiceSettings":
@@ -51,6 +66,10 @@ class ServiceSettings:
             enable_produce=values.get("HUB_ENABLE_PRODUCE", "") == "true",
             # Placeholder only: shows where SSO will live (service/sso.py).
             sso_provider=normalize_provider(values.get("HUB_SSO_PROVIDER")),
+            # Real PDF uploads in hosted staging: exactly "true" opens them, and
+            # only behind sign-in (see uploads_ready).
+            accept_uploads=values.get("HUB_ACCEPT_UPLOADS", "") == "true",
+            retention_days=_retention_days(values.get("HUB_RETENTION_DAYS")),
         )
 
     @property
@@ -62,22 +81,38 @@ class ServiceSettings:
         return self.environment == "development" or self.enable_produce
 
     @property
+    def uploads_ready(self) -> bool:
+        """Real PDF uploads: always in development; hosted only behind the
+        explicit HUB_ACCEPT_UPLOADS opt-in, and never on a public (no sign-in)
+        workspace."""
+        if not self.login_ready:
+            return False
+        if self.environment == "development":
+            return True
+        return self.environment == "staging" and self.accept_uploads and not self.public_access
+
+    @property
+    def hosted_uploads_open(self) -> bool:
+        return self.environment == "staging" and self.uploads_ready
+
+    @property
     def hosted_boundary_ready(self) -> bool:
         return len(self.hosted_controls) == len(HOSTED_CONTROL_VARS)
 
     @property
     def synthetic_intake_ready(self) -> bool:
-        """Bundled-fixture intake runs locally, or hosted only behind the explicit opt-in.
+        """Bundled-fixture intake runs locally, or hosted behind an explicit
+        opt-in (HUB_ALLOW_HOSTED_SYNTHETIC, or HUB_ACCEPT_UPLOADS, which is the
+        wider of the two).
 
-        Real-document intake is a separate boundary: it stays closed in hosted
-        mode regardless of this property until the six control references have
-        working, independently validated adapters.
+        The separate locked real-intake service (service/real_intake) is a
+        different boundary and is unaffected by either flag.
         """
         if not self.login_ready:
             return False
         if self.environment == "development":
             return True
-        return self.environment == "staging" and self.allow_hosted_synthetic
+        return self.environment == "staging" and (self.allow_hosted_synthetic or self.uploads_ready)
 
     def health_payload(self) -> dict[str, object]:
         # Imported lazily so configuration parsing never depends on tool probes.
@@ -87,11 +122,12 @@ class ServiceSettings:
             "ok": True,
             "service": "accessibility-hub-staging",
             "environment": self.environment,
-            "synthetic_only": True,
+            "synthetic_only": not self.hosted_uploads_open,
             "login_ready": self.login_ready,
             "synthetic_intake_ready": self.synthetic_intake_ready,
             "hosted_boundary_ready": self.hosted_boundary_ready,
-            "hosted_intake_enabled": False,
+            "hosted_intake_enabled": self.hosted_uploads_open,
+            "retention_days": self.retention_days,
             "hosted_synthetic_optin": self.allow_hosted_synthetic,
             "configured_hosted_controls": list(self.hosted_controls),
             # Read-only visibility: which document tools this environment has.

@@ -64,7 +64,7 @@ Operational detail is in `incident-response-plan.md`.
 
 ## 8. Retention
 
-Institution Data is retained only as long as needed to provide the Service or as Institution directs. Current Service behavior: documents are retained until the owning user deletes them (`manual-owner-deletion-only`); no automatic expiry. [DECISION: Institution-selected default retention period, e.g., delete all pilot documents [N] days after pilot end.] See `data-retention-and-deletion.md`, including identified gaps.
+Institution Data is retained only as long as needed to provide the Service or as Institution directs. Current Service behavior (hosted pilot service): documents and every copy made from them are deleted automatically 365 days after upload, and authorized users can delete them sooner. Each deletion is audited without document content. [DECISION: Institution may set a different period, and a deletion window after pilot end.] See `data-retention-and-deletion.md`, including identified gaps.
 
 ## 9. Return and deletion on termination
 

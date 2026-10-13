@@ -7,6 +7,32 @@
 > its tests — the same evidence-before-claims discipline the product itself
 > enforces. Last updated: 2026-10-11.
 
+## Hosted real-PDF uploads and 365-day retention (2026-10-13)
+
+Product-owner decisions: the hosted service accepts real PDFs and becomes the
+commercial product, and documents are kept for 365 days.
+
+- `HUB_ACCEPT_UPLOADS=true` (exact value) opens the three-step teacher flow:
+  upload, processing, ready, downloads, accessible copies. It covers every
+  signed-in session on the hosted service. It never opens on a public
+  workspace (`HUB_PUBLIC_ACCESS=true`) or without sign-in. Without the flag,
+  the hosted service keeps its sample-only surface byte for byte.
+- `HUB_RETENTION_DAYS` defaults to 365 and accepts 1–3650.
+  `AssessmentWorker.sweep_retention` runs at startup and then hourly. It
+  deletes each original together with every copy made from it, and audits
+  `document_expired` with no filename or content.
+- Ready pages show a "Kept until" date and a "Delete it now" control (removes
+  the original and every copy; audited as `document_deleted`). The upload
+  page says documents are kept for 365 days and that everyone who signs in
+  sees them, because the access code gives one shared workspace until SSO.
+- Uploads stop with a 507 and an honest message when the disk has less than
+  about 150 MB free.
+- `render.yaml` sets `HUB_ACCEPT_UPLOADS "true"` and `HUB_RETENTION_DAYS "365"`.
+- Disclosed limits (`docs/commercial/data-retention-and-deletion.md` §0):
+  one shared workspace, no malware scan on this service, worker in the web
+  container, 1 GB disk.
+- Tests: `tests/test_hosted_uploads.py`.
+
 ## Post-merge review fixes (2026-07-20)
 
 Three correctness findings from an automated review of the merged Learning-OS
